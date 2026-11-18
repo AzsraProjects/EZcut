@@ -2,7 +2,7 @@
 :root{
   --chrome:#101216; --panel:#16181d; --panel2:#1c1f26; --raised:#262a33; --line:#2b2f3a;
   --fg:#f1f3f7; --muted:#969cab; --dim:#80869a;
-  --accent:#22e3b6; --accent-soft:rgba(34,227,182,.14); --on-accent:#03241c;
+  --key:#ffcf4a; --rec:#ff5d6c; --accent:#22e3b6; --accent-soft:rgba(34,227,182,.14); --on-accent:#03241c;
   --video:#5f7cff; --audio:#21b98f; --sound:#d99a2b; --title:#e06bc8; --danger:#ff5d6c; --stage:#050506; --scrim:rgba(0,0,0,.6); --guide:#ffd84d;
   --f-ui:"Segoe UI Variable Text","Segoe UI",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
   --f-mono:"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
@@ -95,6 +95,11 @@ svg.i.f{fill:currentColor;stroke:none}
 .add{position:absolute;right:5px;bottom:5px;width:20px;height:20px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;opacity:0;transition:opacity .12s}
 .add svg{width:12px;height:12px;stroke-width:2.6}
 .tile:hover .add{opacity:1}
+/* Média déjà dans le montage : pastille verte et contour, pour voir d'un coup d'œil ce qui reste à utiliser. */
+.tile.used .thumb{outline-color:color-mix(in srgb,var(--accent) 60%,transparent)}
+.tile.used:hover .thumb,.tile.used:focus-visible .thumb{outline-color:var(--accent)}
+.inuse{position:absolute;left:5px;top:5px;display:flex;align-items:center;gap:3px;height:18px;padding:0 6px;border-radius:9px;background:var(--accent);color:var(--on-accent);font:700 11px var(--f-ui)}
+.inuse b{font:600 10px var(--f-mono)}
 .dur{position:absolute;left:5px;bottom:5px;font:500 10px var(--f-mono);background:rgba(0,0,0,.7);color:#fff;border-radius:4px;padding:0 5px}
 .libfoot{border-top:1px solid var(--line);padding:7px 10px;color:var(--muted);font-size:11.5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 kbd{font:500 10.5px var(--f-mono);background:var(--raised);border:1px solid var(--line);border-radius:4px;padding:0 5px}
@@ -163,15 +168,44 @@ input[type=color]{width:34px;height:22px;padding:0;border:1px solid var(--line);
 .lane{position:relative;border-bottom:1px solid var(--line)}
 .lane.video{height:var(--lane-v,70px)}.lane.overlay{height:46px}.lane.audio,.lane.sound{height:40px}.lane.text{height:34px}
 .lane-empty{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:11.5px;pointer-events:none}
-.clip{position:absolute;top:5px;bottom:5px;border-radius:6px;overflow:hidden;border:1.5px solid transparent;cursor:pointer}
-.clip.video,.clip.overlay{background:var(--video) repeat-x left center/auto 100%}
+/* Chaque clip est détouré : deux morceaux d'un même média restent distincts, la coupe se voit comme un double trait.
+   Le filet sombre intérieur sépare le contour du contenu (vignettes claires, clips de musique verts). */
+.clip{position:absolute;top:5px;bottom:5px;border-radius:6px;overflow:hidden;border:2px solid #fff;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6);cursor:pointer}
+.clip.video,.clip.overlay{background:var(--video)}
+/* Vignettes : une case par instant, nette à toute hauteur de piste ; le filet sombre reste au-dessus des images. */
+.frames{position:absolute;inset:0;pointer-events:none}
+.frames i{position:absolute;top:0;bottom:0;background:var(--sprite) no-repeat 0 0;box-shadow:inset -1px 0 rgba(0,0,0,.35)}
+.frames::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6)}
 .clip.audio{background:var(--audio)}
 .clip.sound{background:var(--sound)}
 .clip.audio,.clip.sound{cursor:grab;touch-action:none}
 .clip.text{background:var(--title)}
 .clip.overlay,.clip.text{cursor:grab;touch-action:none}
 .lane.text .clip{top:3px;bottom:3px}
-.clip.sel{border-color:var(--fg);z-index:2}
+.clip.sel{border-color:var(--accent);box-shadow:inset 0 0 0 1px rgba(0,0,0,.6),0 0 0 2px var(--accent),0 0 10px var(--accent);z-index:2}
+/* Sélection au lasso : rectangle tracé depuis le vide d'une piste. */
+.insp .multi{margin:8px 10px 0;padding:6px 9px;border-radius:6px;background:var(--accent-soft);color:var(--fg);font-size:11.5px}
+/* Mouvement : losanges des points sur le clip, trajet dans l'aperçu. */
+.clip .motion{position:absolute;left:0;right:0;bottom:6px;height:2px;background:rgba(255,207,74,.45);pointer-events:none}
+.clip .kf{position:absolute;bottom:1px;width:12px;height:12px;margin-left:-6px;transform:rotate(45deg);background:var(--key);border:2px solid #3a2c00;border-radius:2px;cursor:ew-resize;touch-action:none;z-index:2}
+.clip .kf.on{background:#fff;border-color:var(--key);box-shadow:0 0 0 3px rgba(255,207,74,.45)}
+.mpath{position:absolute;pointer-events:none;overflow:visible;z-index:2}
+.mpath polyline{fill:none;stroke:var(--key);stroke-width:2.5;stroke-dasharray:7 7;opacity:.9;filter:drop-shadow(0 0 1px rgba(0,0,0,.8))}
+.mpath.rec polyline{stroke:var(--rec)}
+.mpath rect{fill:var(--key);stroke:#3a2c00;stroke-width:2.5;pointer-events:all;cursor:move}
+.mpath rect.on{fill:#fff;stroke:var(--key)}
+.mpath rect.pass{pointer-events:none;opacity:.55}
+.stage canvas.rec{cursor:crosshair}
+.mimic-badge{position:absolute;left:20px;top:20px;display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:14px;background:var(--rec);color:#fff;font-weight:600;font-size:11.5px;z-index:3;pointer-events:none}
+.mimic-badge i{width:8px;height:8px;border-radius:50%;background:#fff;animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.mimic-badge i{animation:none}}
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.presets .btn{justify-content:flex-start;font-size:11.5px;height:28px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mkey{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--muted)}
+.mkey b{color:var(--key);font-weight:600}
+.mactions{display:flex;gap:6px;flex-wrap:wrap}
+.marquee{position:absolute;z-index:6;border:1px solid var(--accent);background:var(--accent-soft);pointer-events:none;border-radius:2px}
 .clip em{position:absolute;left:24px;top:3px;font-style:normal;font-size:10.5px;font-weight:600;background:rgba(0,0,0,.62);color:#fff;border-radius:4px;padding:0 5px;max-width:calc(100% - 48px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 .clip em svg{width:11px;height:11px;vertical-align:-1px;margin-right:4px}
 .clip em b{color:#5ff0cf;margin-left:5px}
@@ -186,6 +220,12 @@ input[type=color]{width:34px;height:22px;padding:0;border:1px solid var(--line);
 .vol{position:absolute;left:24px;right:24px;height:11px;margin-bottom:-5px;cursor:ns-resize;touch-action:none;z-index:1}
 .vol::after{content:"";position:absolute;left:0;right:0;top:5px;height:1.5px;background:#fff;opacity:.55;box-shadow:0 0 0 .5px rgba(0,0,0,.55)}
 .clip:hover .vol::after,.vol.on::after{opacity:1;height:2px}
+.th.hasvol{align-items:flex-start;padding-top:5px}
+.tvol{position:absolute;left:26px;right:8px;bottom:5px;display:flex;align-items:center;gap:5px;cursor:default}
+.tvol input{flex:1;min-width:0;height:12px}
+.tvol b{flex:none;width:36px;text-align:right;font:500 9.5px var(--f-mono);color:var(--dim)}
+.tvol.boost b{color:#ffb547}
+.vol.boost::after{background:#ffb547;opacity:.9} /* au-dessus de 100 % : son amplifié */
 .vol b{position:absolute;left:50%;bottom:9px;transform:translateX(-50%);font:600 10.5px var(--f-mono);background:rgba(0,0,0,.8);color:#fff;border-radius:4px;padding:1px 6px;white-space:nowrap}
 .clip.off{opacity:.38;filter:grayscale(1)}
 .fh{position:absolute;top:1px;width:11px;height:11px;border-radius:50%;background:#fff;border:2px solid rgba(0,0,0,.65);cursor:ew-resize;touch-action:none;opacity:0;transition:opacity .12s;z-index:2}
@@ -219,6 +259,20 @@ details.adv>.row{margin-bottom:9px}
 .dialog footer{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .dialog p{margin:0}
 .dialog .row{grid-template-columns:96px minmax(0,1fr) 0}
+.dialog.welcome{width:min(560px,94vw);gap:14px;padding:20px}
+.welcome .logo{font-size:17px}
+.welcome h3{margin:6px 0 0;font:600 11px var(--f-ui);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.wbtns{display:flex;gap:8px}.wbtns .btn{flex:1;justify-content:center;height:38px}
+.recent{list-style:none;margin:0;padding:0;display:grid;gap:4px;max-height:50vh;overflow:auto}
+.recent li{display:flex;align-items:center;gap:4px}
+.recent li>button:first-child{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r1);text-align:left;color:var(--fg)}
+.recent li>button:first-child:hover{background:var(--raised)}
+.recent li>button:first-child>svg{width:18px;height:18px;color:var(--accent);flex:none}
+.recent span{flex:1;min-width:0;display:grid}
+.recent b,.recent small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent small{color:var(--dim);font-size:11px}
+.recent em{font-style:normal;color:var(--muted);font-size:11px;flex:none}
+.recent .forget{opacity:0}.recent li:hover .forget,.recent .forget:focus-visible{opacity:1}
 .meta{color:var(--muted);font:400 11.5px var(--f-mono)}
 .meta.path{word-break:break-all;user-select:text}
 .warn{color:var(--danger)}

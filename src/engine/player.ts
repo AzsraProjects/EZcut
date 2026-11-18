@@ -1,8 +1,10 @@
 /** Lecture et composition : calcule l'image du projet à un instant donné, pour l'aperçu, les vignettes et l'export. */
-import { activeAt, clipAt, clipsOf, clipsOfKind, fadeGain, imageGain, isImage, isSound, projectDuration, tracksOfKind } from '../core/ops';
+import { hasMotion, motionAt } from '../core/motion';
+import { activeAt, clipAt, clipsOf, clipsOfKind, fadeGain, imageGain, isImage, isSound, projectDuration, trackGain, tracksOfKind } from '../core/ops';
 import { BLEND_MODES, emptyProject, type Clip, type Project } from '../core/types';
 import { catalog, type CatEffect, type CatItem } from '../effects/catalog';
 import { Engine, type EffectProgram, type Failed, type Target, type TransitionProgram } from './gl';
+import { forgetTracks, SeqDecoder } from './seqdecoder';
 import { animState, drawText, textSize } from './text';
 
 export const TW = 240, TH = 135;
@@ -11,7 +13,9 @@ const PREVIEW_H = 540;
 const PREVIEW_STEPS = [270, 360, 540, 720, 900, 1080, 1440, 2160];
 export type PreviewQuality = 'auto' | 'full' | 'half' | 'quarter';
 
-interface Source { url: string; kind: 'video' | 'image'; el: HTMLVideoElement | HTMLImageElement; tex: WebGLTexture; w: number; h: number; loaded: boolean; }
+interface Source { url: string; kind: 'video' | 'image'; el: HTMLVideoElement | HTMLImageElement; tex: WebGLTexture; w: number; h: number; loaded: boolean;
+  /** Export : instant du média dont l'image est déjà dans la texture (arrêt sur image, côté figé d'une transition : rien à redécoder). */
+  texTime?: number; }
 interface Want { clip: Clip; index: number; start: number; time: number; live: boolean; }
 interface TargetSet { fit: Target; ping: [Target, Target]; ra: Target; rb: Target; out: Target; acc: [Target, Target]; }
 interface ChainItem { p: EffectProgram; params: Record<string, unknown>; key: string; }
@@ -59,6 +63,9 @@ export class Player {
   private texts = new Map<string, TextCache>();
   private progs = new Map<string, EffectProgram | TransitionProgram | Failed>();
   private sets = new Map<string, TargetSet>();
+  /** Export : décodeurs séquentiels par fichier (deux au plus, pour une transition entre deux morceaux d'un même fichier).
+   *  null = fichier qui ne se décode pas ainsi ; il passe par le lecteur. */
+  private decoders = new Map<string, SeqDecoder[] | null>();
   private sample: { a: WebGLTexture; b: WebGLTexture; w: number; h: number } | null = null;
   private queue: { item: CatItem; ctx: CanvasRenderingContext2D }[] = [];
   /** Instant le plus parlant de chaque effet pour sa vignette fixe. */
@@ -127,6 +134,17 @@ export class Player {
     return s;
   }
 
+  /** Demi-largeur et demi-hauteur du clip à la taille 1, en fraction du cadre ; null tant que sa source n'est pas connue. */
+  halfSize(clip: Clip): { w: number; h: number } | null {
+    const p = this.getProject(), A = p.width / p.height;
+    if (clip.text) { const c = this.texts.get(clip.id), h = this.vh || p.height; return c ? { w: c.w / h / (2 * A), h: c.h / h / 2 } : null; }
+    const s = this.sources.get(clip.id), m = p.media.find(x => x.id === clip.mediaId);
+    const sw = s?.loaded ? s.w : m?.width, sh = s?.loaded ? s.h : m?.height;
+    if (!sw || !sh) return null;
+    const sa = sw / sh, bx = sa > A ? A : sa, by = sa > A ? A / sa : 1;
+    return { w: bx / (2 * A), h: by / 2 };
+  }
+
   /* ---------- sources ---------- */
   private source(p: Project, clip: Clip): Source | null {
     let s = this.sources.get(clip.id);
@@ -154,16 +172,25 @@ export class Player {
   /** Après une coupe, les deux moitiés lisent le même fichier à la suite : la seconde reprend le lecteur de la première,
    *  déjà à la bonne image, au lieu d'en ouvrir un autre (qui reprendrait avec un temps de retard). */
   private adopt(p: Project, clip: Clip, time: number, needed: Set<string>) {
-    if (this.sources.has(clip.id) || clip.still) return;
+    if (clip.still) return;
+    // Un lecteur à l'arrêt (préparé d'avance) cède la place à celui qui lit déjà le même fichier à cet endroit :
+    // le relancer coûterait quelques images figées à la coupe.
+    const own = this.sources.get(clip.id);
+    if (own && !(this.playing && own.kind === 'video' && (own.el as HTMLVideoElement).paused)) return;
     const url = p.media.find(m => m.id === clip.mediaId)?.url;
     if (!url) return;
     for (const [id, s] of this.sources) {
-      if (needed.has(id) || s.kind !== 'video' || s.url !== url) continue;
+      if (id === clip.id || needed.has(id) || s.kind !== 'video' || s.url !== url) continue;
       const el = s.el as HTMLVideoElement;
-      if (el.seeking || Math.abs(el.currentTime - time) > 0.25) continue;
+      if (el.seeking || Math.abs(el.currentTime - time) > 0.25 || (own && el.paused)) continue;
+      if (own) this.dropSource(clip.id);
       this.sources.delete(id); this.sources.set(clip.id, s);
       return;
     }
+  }
+  /** Le clip suit sans raccord le précédent dans le même fichier (morceaux d'une vidéo coupée) : il reprendra son lecteur. */
+  private continues(p: Project, prev: Clip | undefined, clip: Clip) {
+    return !!prev && !prev.still && !clip.still && prev.mediaId === clip.mediaId && !prev.transition && Math.abs(prev.in + prev.dur - clip.in) < 0.05;
   }
   private dropSource(id: string) {
     const s = this.sources.get(id);
@@ -220,8 +247,9 @@ export class Player {
       active.add(w.clip.id);
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement;
-      el.volume = clamp(w.clip.volume * fadeGain(w.clip, w.time - w.clip.in), 0, 1);
+      this.gain(el, w.clip.volume * trackGain(p, 'video') * fadeGain(w.clip, w.time - w.clip.in));
       el.muted = this.muted || !w.live || w.clip.still || w.clip.off || !!p.tracks.video?.muted;
+      if (el.playbackRate !== this.rate) el.playbackRate = this.rate;
       if (w.live && this.playing && !w.clip.still) {
         if (el.paused) { if (el.ended || Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time; el.play().catch(() => {}); }
         else if (this.jumped && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
@@ -238,8 +266,9 @@ export class Player {
       active.add(l.clip.id);
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement, time = l.clip.in + l.local, off = Math.abs(el.currentTime - time);
-      el.volume = clamp(l.clip.volume * fadeGain(l.clip, l.local), 0, 1);
+      this.gain(el, l.clip.volume * trackGain(p, l.track) * fadeGain(l.clip, l.local));
       el.muted = this.muted || !!p.tracks[l.track]?.muted; // le son d'une incrustation suit l'état de sa propre piste
+      if (el.playbackRate !== this.rate) el.playbackRate = this.rate;
       if (this.playing) {
         if (el.paused) { if (el.ended || off > 0.05) el.currentTime = time; el.play().catch(() => {}); }
         else if (off > (this.jumped ? 0.05 : 0.3)) el.currentTime = time;
@@ -252,20 +281,74 @@ export class Player {
     // Préchargement : clip principal suivant, incrustations qui arrivent dans les deux secondes.
     const near = new Set(active);
     const cur = wants.length ? wants[wants.length - 1].index : -1;
-    const prime = (clip: Clip) => {
+    let preroll: string | null = null;
+    const prime = (clip: Clip, lead = 0) => {
       near.add(clip.id);
       if (active.has(clip.id)) return;
       const s = this.source(p, clip);
-      if (s?.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); if (!el.seeking && Math.abs(el.currentTime - clip.in) > 0.02) el.currentTime = clip.in; }
+      if (s?.kind !== 'video') return;
+      const el = s.el as HTMLVideoElement;
+      // Un lecteur met quelques dizaines de millisecondes à démarrer : le suivant, déjà posé sur son début, est lancé (muet)
+      // à cet instant avant la coupe, sans recherche, pour qu'il tourne déjà quand la coupe arrive.
+      if (lead > 0 && !clip.still && el.readyState >= 3 && !el.seeking && Math.abs(el.currentTime - clip.in) < 0.03) {
+        if (el.paused) { el.muted = true; el.play().catch(() => {}); }
+        preroll = clip.id; return;
+      }
+      if (lead > 0 && !el.paused) { preroll = clip.id; return; } // déjà lancé
+      if (!el.paused) el.pause();
+      if (!el.seeking && Math.abs(el.currentTime - clip.in) > 0.02) el.currentTime = clip.in;
     };
-    if (cur >= 0 && p.video[cur + 1]) prime(p.video[cur + 1]);
+    // Le morceau suivant d'une vidéo coupée n'a pas besoin d'un lecteur à lui : il reprendra celui-ci, déjà au bon endroit.
+    if (cur >= 0 && p.video[cur + 1] && !this.continues(p, p.video[cur], p.video[cur + 1])) {
+      const w = wants[wants.length - 1], left = w.start + w.clip.dur - t, next = p.video[cur + 1];
+      prime(next, this.playing && !w.clip.transition && left > 0 && left < 0.06 ? left : 0);
+      // Clip suivant très court (effet de transition, plan éclair) : celui d'après est préparé dès maintenant,
+      // sinon il n'aurait que la durée de ce clip pour se charger.
+      const after = p.video[cur + 2];
+      if (after && next.dur < 2 && !this.continues(p, next, after)) prime(after);
+    }
     for (const track of tracksOfKind(p, 'overlay')) if (!p.tracks[track]?.hidden) for (const c of clipsOf(p, track)) if (c.start > t && c.start - t < 2) prime(c);
     if (cur >= 0) for (const i of [cur - 1, cur - 2, cur + 2]) if (p.video[i]) near.add(p.video[i].id);
     if (this.targetClipId) near.add(this.targetClipId);
     for (const [id, s] of this.sources) {
       if (!near.has(id)) { this.dropSource(id); continue; }
-      if (!active.has(id) && s.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); }
+      if (!active.has(id) && id !== preroll && s.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); }
     }
+  }
+
+  /** En lecture, la vidéo qui donne l'heure attend des données : musique et sons attendent avec elle au lieu de
+   *  filer devant puis d'être ramenés en arrière à chaque image (effet de disque rayé). */
+  private stalled = false;
+  /** Vitesse de lecture de l'aperçu : 1 normale, 0,5 au ralenti (pour mimer un mouvement). */
+  rate = 1;
+  private actx: AudioContext | null = null;
+  private boosts = new WeakMap<HTMLMediaElement, GainNode>();
+  private limiter: DynamicsCompressorNode | null = null;
+  /** Volume d'un lecteur, de 0 à 16 (clip × piste). Jusqu'à 100 %, l'élément s'en charge ; au-delà, un gain WebAudio
+   *  est branché sur lui à la première demande et le reste (un élément ne se débranche pas). */
+  private gain(el: HTMLMediaElement, g: number) {
+    g = clamp(g, 0, 16);
+    el.volume = Math.min(1, g);
+    let node = this.boosts.get(el);
+    if (!node && g > 1) {
+      try {
+        this.actx ??= new AudioContext();
+        if (!this.limiter) {
+          // Limiteur commun aux sons amplifiés : les crêtes sont retenues au lieu de saturer.
+          const l = this.limiter = this.actx.createDynamicsCompressor();
+          l.threshold.value = -1.5; l.knee.value = 0; l.ratio.value = 20; l.attack.value = 0.002; l.release.value = 0.08;
+          l.connect(this.actx.destination);
+        }
+        const src = this.actx.createMediaElementSource(el);
+        node = this.actx.createGain();
+        src.connect(node).connect(this.limiter);
+        this.boosts.set(el, node);
+      } catch { return; } // pas de WebAudio : le son reste plafonné à 100 % dans l'aperçu (l'export, lui, applique le gain)
+    }
+    if (!node) return;
+    const v = Math.max(1, g);
+    if (node.gain.value !== v) node.gain.value = v;
+    if (this.actx?.state === 'suspended' && this.playing) void this.actx.resume();
   }
 
   private syncAudio(p: Project, t: number) {
@@ -281,12 +364,13 @@ export class Player {
         const key = track + '|' + clip.mediaId, media = p.media.find(m => m.id === clip.mediaId);
         let a = this.audios.get(key);
         if (a && media && a.dataset.url !== media.url) { a.pause(); this.audios.delete(key); a = undefined; }
-        if (!a && media?.url) { a = new Audio(media.url); a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(key, a); }
+        if (!a && media?.url) { a = new Audio(); a.crossOrigin = 'anonymous'; a.src = media.url; a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(key, a); }
         if (!a) continue;
         active.add(key);
         const local = t - clip.start, time = clip.in + local, off = Math.abs(a.currentTime - time);
-        a.volume = clamp(clip.volume * fadeGain(clip, local), 0, 1); a.muted = this.muted;
-        if (this.playing) {
+        this.gain(a, clip.volume * trackGain(p, track) * fadeGain(clip, local)); a.muted = this.muted;
+        if (a.playbackRate !== this.rate) a.playbackRate = this.rate;
+        if (this.playing && !this.stalled) {
           if (a.paused) { if (off > 0.05) a.currentTime = time; a.play().catch(() => {}); }
           // Un lecteur qui a pris du retard (chargement) ou de l'avance est recalé ; pas pendant qu'il se positionne déjà.
           else if (!a.seeking && (this.jumped ? off > 0.05 : off > 0.15 && a.readyState >= 3)) a.currentTime = time;
@@ -324,10 +408,12 @@ export class Player {
   private clipFrame(clip: Clip, w: number, h: number, out: Target | null, set: TargetSet, key: string, time: number, extra?: ChainItem) {
     const s = this.sources.get(clip.id);
     if (!s || !s.loaded || clip.off) { this.engine.clear(w, h, out); return; }
-    this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform);
+    const m = motionAt(clip, time);
+    this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, m.transform);
     const ch = this.chainFor(clip, key);
     if (extra) ch.push(extra);
-    const g = imageGain(clip, time), progress = clip.dur > 0 ? clamp(time / clip.dur, 0, 1) : 0;
+    // Sur la piste principale, l'opacité d'un mouvement assombrit vers le noir, comme un fondu.
+    const g = imageGain(clip, time) * (hasMotion(clip) ? m.opacity : 1), progress = clip.dur > 0 ? clamp(time / clip.dur, 0, 1) : 0;
     if (g >= 1) { this.runChain(set.fit.tex, ch, w, h, out, set, time, progress); return; }
     // Fondu de l'image : le clip, effets compris, est assombri vers le noir.
     if (!ch.length) { this.engine.blit(set.fit.tex, w, h, out, g); return; }
@@ -376,15 +462,16 @@ export class Player {
     visible.forEach((l, i) => {
       const dst = i === visible.length - 1 ? out : base === set.acc[0] ? set.acc[1] : set.acc[0];
       const clip = l.clip;
-      let top = set.fit.tex, opacity = clip.opacity * imageGain(clip, l.local);
+      const m = motionAt(clip, l.local);
+      let top = set.fit.tex, opacity = m.opacity * imageGain(clip, l.local);
       if (clip.text) {
         const a = animState(clip.text, l.local, clip.dur);
         opacity *= a.alpha;
         const tx = this.textTexture(clip, h, a.chars);
-        this.engine.drawFit(tx.tex, tx.w, tx.h, w, h, set.fit, { ...clip.transform, scale: clip.transform.scale * a.scale, y: clip.transform.y + a.dy }, true, true);
+        this.engine.drawFit(tx.tex, tx.w, tx.h, w, h, set.fit, { ...m.transform, scale: m.transform.scale * a.scale, y: m.transform.y + a.dy }, true, true);
       } else {
         const s = this.sources.get(clip.id)!;
-        this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform, true);
+        this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, m.transform, true);
         const ch = this.chainFor(clip, key);
         if (ch.length) { this.runChain(set.fit.tex, ch, w, h, set.ra, set, l.local, clamp(l.local / clip.dur, 0, 1)); top = set.ra.tex; }
       }
@@ -480,19 +567,20 @@ export class Player {
 
     // 1. Horloge : en lecture, la vidéo de la piste principale donne l'heure (image et son restent synchrones).
     //    Elle est lue avant toute synchronisation, pour voir une fin de fichier avant de la traiter comme une pause.
+    this.stalled = false;
     if (this.playing && !this.jumped) {
       const f0 = this.frameAt(p, this.t), live = f0 ? (f0.b?.live ? f0.b : f0.a) : null, s = live ? this.sources.get(live.clip.id) : null;
       // La vidéo ne sert d'horloge que tant qu'on est avant la fin de son clip, et seulement si elle est lisible :
       // au-delà (musique ou titre plus long que l'image) ou sur un fichier illisible, l'horloge du système prend le relais.
       if (live && s?.kind === 'video' && !live.clip.still && this.t < live.start + live.clip.dur - 1e-6) {
         const el = s.el as HTMLVideoElement, end = live.start + live.clip.dur;
-        if (el.error || el.networkState === el.NETWORK_NO_SOURCE) this.t += dt;
+        if (el.error || el.networkState === el.NETWORK_NO_SOURCE) this.t += dt * this.rate;
         else if (el.ended) this.t = end;
         else if (!el.paused && !el.seeking && el.readyState >= 3) {
           const local = el.currentTime - live.clip.in;
           this.t = local >= live.clip.dur - 0.5 / p.fps ? end : live.start + clamp(local, 0, live.clip.dur);
-        }
-      } else this.t += dt;
+        } else this.stalled = true; // la vidéo charge encore : l'horloge l'attend, le son aussi (voir syncAudio)
+      } else this.t += dt * this.rate;
       if (this.t >= total - 1e-4) { this.t = total; this.pause(); }
     }
     // 2. Sources amenées à l'instant voulu.
@@ -531,10 +619,41 @@ export class Player {
   /* ---------- export ---------- */
   /** Avant et après un export : repart de tampons d'effets vierges et rend la mémoire des images pleine taille. */
   resetExportState(w: number, h: number) {
+    for (const list of this.decoders.values()) list?.forEach(d => d.close());
+    this.decoders.clear(); forgetTracks();
+    for (const src of this.sources.values()) src.texTime = undefined; // l'aperçu a pu changer les textures entre deux exports
     for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect') this.engine.releaseState(pr, 'x');
     const key = w + 'x' + h, s = this.sets.get(key);
     if (s && !(w === this.vw && h === this.vh) && !(w === TW && h === TH)) { [s.fit, ...s.ping, s.ra, s.rb, s.out, ...s.acc].forEach(t => this.engine.freeTarget(t)); this.sets.delete(key); }
     for (const id of [...this.texts.keys()]) this.dropText(id); // les titres seront redessinés à la taille voulue
+  }
+
+  /** Image d'un fichier à l'instant t par décodage séquentiel ; null si ce fichier passe par le lecteur (format, erreur). */
+  private async decodedFrame(url: string, t: number, name: string): Promise<VideoFrame | null> {
+    let list = this.decoders.get(url);
+    if (list === null) return null;
+    if (!list) { list = []; this.decoders.set(url, list); }
+    // Le décodeur qui vient juste avant t avance ; sinon un nouveau (deux au plus), sinon le plus ancien repart.
+    let d = list.filter(x => x.last >= 0 && t >= x.last - 1e-4 && t <= x.last + 3).sort((a, b) => b.last - a.last)[0];
+    if (!d && list.length < 2) {
+      const made = await SeqDecoder.open(url).catch(() => null);
+      if (!made) { if (!list.length) { this.decoders.set(url, null); this.onLog('export : décodage séquentiel indisponible, lecture par recherche', name); } return null; }
+      list.push(made); d = made;
+    }
+    d ??= list.reduce((a, b) => (a.last <= b.last ? a : b));
+    try {
+      const fr = await d.frameAt(t);
+      if (!fr) throw new Error('aucune image décodée');
+      return fr;
+    }
+    catch (e) { this.giveUp(url, list, name, String((e as Error).message ?? e)); return null; }
+  }
+  /** Ce fichier passe par le lecteur pour le reste de l'export. La table n'est touchée que si elle est toujours celle-ci
+   *  (un export qui a redémarré entre-temps a la sienne). */
+  private giveUp(url: string, list: SeqDecoder[], name: string, why: string) {
+    this.onLog('export : décodage séquentiel en échec, lecture par recherche', { média: name, erreur: why });
+    list.forEach(x => x.close());
+    if (this.decoders.get(url) === list) this.decoders.set(url, null);
   }
 
   /** Amène les sources exactement à l'instant t puis rend l'image w×h. Renvoie les pixels RGBA, lignes de bas en haut. */
@@ -544,12 +663,26 @@ export class Player {
     // Seules les sources de l'image en cours restent ouvertes : un long projet n'accumule pas les décodeurs.
     const keep = new Set(wants.map(x => x.clip.id));
     for (const id of [...this.sources.keys()]) if (!keep.has(id)) this.dropSource(id);
+    // De même pour les décodeurs séquentiels : un fichier qui n'est plus à l'image libère les siens (sa table reste en cache).
+    const urls = new Set(wants.map(x => p.media.find(m => m.id === x.clip.mediaId)?.url));
+    for (const [u, list] of [...this.decoders]) if (list && !urls.has(u)) { list.forEach(d => d.close()); this.decoders.delete(u); }
     for (const wnt of wants) {
       const s = this.source(p, wnt.clip);
       if (!s) continue; // média introuvable : image noire, comme dans l'aperçu
       if (s.kind === 'image') { if (!s.loaded) await once(s.el, 'load', 5000); continue; }
       const el = s.el as HTMLVideoElement, name = p.media.find(m => m.id === wnt.clip.mediaId)?.name ?? 'média';
       el.pause(); el.muted = true;
+      if (s.loaded && s.texTime === wnt.time) continue;
+      const fr = await this.decodedFrame(s.url, wnt.time, name);
+      if (fr) {
+        const m = p.media.find(x => x.id === wnt.clip.mediaId);
+        // Taille différente de celle du fichier importé (pixels non carrés…) ou téléversement refusé : le lecteur reprend.
+        const sameSize = !m?.width || (fr.displayWidth === m.width && fr.displayHeight === m.height);
+        if (sameSize && this.engine.upload(s.tex, fr)) { s.w = fr.displayWidth; s.h = fr.displayHeight; s.loaded = true; s.texTime = wnt.time; continue; }
+        const list = this.decoders.get(s.url);
+        if (list) this.giveUp(s.url, list, name, sameSize ? 'image refusée par la carte graphique' : `taille ${fr.displayWidth}×${fr.displayHeight} au lieu de ${m?.width}×${m?.height}`);
+      }
+      s.texTime = undefined;
       if (el.readyState < 1 && !el.error) await once(el, 'loadedmetadata', 8000);
       if (el.error || el.readyState < 1) throw new Error(`« ${name} » ne peut pas être lu (format non pris en charge ou fichier illisible).`);
       if (Math.abs(el.currentTime - wnt.time) > 0.0005 || el.readyState < 2) {

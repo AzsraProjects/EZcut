@@ -1,5 +1,5 @@
 /** Export : rend chaque image avec le même compositeur que l'aperçu et l'envoie à FFmpeg (processus principal). */
-import { clipsOf, isSound, kindOf, projectDuration } from '../core/ops';
+import { clipsOf, isSound, kindOf, projectDuration, trackGain } from '../core/ops';
 import type { Clip, Project } from '../core/types';
 import { ez, type AudioSegment } from '../desktop/api';
 import { player } from '../engine/player';
@@ -10,25 +10,26 @@ export interface ExportResult { ok: boolean; path?: string; error?: string; canc
 /** Plan audio : une suite de segments par piste — la piste principale d'abord, puis chaque piste de son ou d'incrustation qui a du son,
  *  dans l'ordre de la timeline. Images, vidéos muettes et trous deviennent des silences. */
 export function audioPlan(p: Project): AudioSegment[][] {
-  const seg = (c: Clip): AudioSegment => {
+  // Le volume d'un segment est celui du clip multiplié par celui de sa piste (jusqu'à 200 % × 200 %).
+  const seg = (c: Clip, track: string): AudioSegment => {
     const m = p.media.find(x => x.id === c.mediaId);
-    return { path: m && m.hasAudio && m.kind !== 'image' && !c.still && !c.off ? m.path : null, in: c.in, dur: c.dur, volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut };
+    return { path: m && m.hasAudio && m.kind !== 'image' && !c.still && !c.off ? m.path : null, in: c.in, dur: c.dur, volume: c.volume * trackGain(p, track), fadeIn: c.fadeIn, fadeOut: c.fadeOut };
   };
   // Piste libre : les trous entre les clips sont comblés par du silence. Une piste sans aucun son est omise.
-  const free = (track: Clip[]): AudioSegment[] => {
+  const free = (track: Clip[], id: string): AudioSegment[] => {
     const out: AudioSegment[] = [];
     let at = 0;
     for (const c of [...track].sort((a, b) => a.start - b.start)) {
       if (c.start > at + 1e-6) out.push({ path: null, in: 0, dur: c.start - at, volume: 0 });
-      out.push(seg(c)); at = c.start + c.dur;
+      out.push(seg(c, id)); at = c.start + c.dur;
     }
     return out.some(s => s.path) ? out : [];
   };
   // Une piste muette ne produit aucun son ; la piste principale garde ses durées, en silence.
   // Une incrustation masquée n'est pas lue du tout à l'aperçu : elle se tait aussi à l'export.
   const off = (t: string) => !!p.tracks[t]?.muted || (kindOf(t) === 'overlay' && !!p.tracks[t]?.hidden);
-  const others = p.order.filter(t => isSound(t) || kindOf(t) === 'overlay').map(t => (off(t) ? [] : free(clipsOf(p, t)))).filter(list => list.length);
-  return [p.video.map(c => (off('video') ? { ...seg(c), path: null } : seg(c))), ...others];
+  const others = p.order.filter(t => isSound(t) || kindOf(t) === 'overlay').map(t => (off(t) ? [] : free(clipsOf(p, t), t))).filter(list => list.length);
+  return [p.video.map(c => (off('video') ? { ...seg(c, 'video'), path: null } : seg(c, 'video'))), ...others];
 }
 
 export function exportSize(p: Project, height: number): { width: number; height: number } {

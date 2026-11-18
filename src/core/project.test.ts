@@ -42,7 +42,7 @@ describe('lecture d\'un projet', () => {
     Object.assign(o.video[0], { dur: 1e308, in: -4, volume: 99, transform: { scale: 'grand', x: 1e9, y: null, rot: 0 } });
     const p = parse(o)!;
     expect(p.width).toBe(8192); expect(p.fps).toBe(1); expect(p.name).toHaveLength(120);
-    expect(p.video[0].dur).toBe(86400); expect(p.video[0].in).toBe(0); expect(p.video[0].volume).toBe(1);
+    expect(p.video[0].dur).toBe(86400); expect(p.video[0].in).toBe(0); expect(p.video[0].volume).toBe(4); // plafond : 400 %
     expect(p.video[0].transform).toEqual({ scale: 1, x: 5, y: 0, rot: 0 });
   });
   it('écarte les clips sans média, en double, ou sur la mauvaise piste', () => {

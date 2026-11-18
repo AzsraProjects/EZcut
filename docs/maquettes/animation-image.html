@@ -1,0 +1,358 @@
+<title>EZcut Mouvement</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Maquette interactive de l'outil « Mouvement » d'EZcut : aperçu (au centre), panneau Mouvement de l'inspecteur (à droite),
+   piste de la timeline avec les points du mouvement (dessous), puis les notes de validation. Thème sombre d'EZcut. */
+:root{
+  --page:#08090b; --chrome:#101216; --panel:#16181d; --panel2:#1c1f26; --raised:#262a33; --line:#2b2f3a;
+  --fg:#f1f3f7; --muted:#969cab; --dim:#6c7284;
+  --accent:#22e3b6; --accent-soft:rgba(34,227,182,.14); --on-accent:#03241c;
+  --video:#5f7cff; --key:#ffcf4a; --rec:#ff5d6c; --stage:#050506;
+  --f-ui:"Inter","Segoe UI",system-ui,sans-serif; --f-mono:"JetBrains Mono",Consolas,monospace;
+  --r1:6px; --r2:10px;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--fg);font:12.5px/1.45 var(--f-ui);margin:0;
+  padding-block:14px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.app{max-width:1280px;margin:0 auto;background:var(--chrome);border:1px solid var(--line);border-radius:var(--r2);overflow:hidden}
+.bar{display:flex;align-items:center;gap:10px;height:42px;padding:0 12px;border-bottom:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:7px;font-weight:700;font-size:14px}
+.logo i{width:20px;height:20px;border-radius:6px;background:var(--accent);display:grid;place-items:center;color:var(--on-accent);font-style:normal;font-size:10px}
+.bar .name{margin:0 auto;font-weight:600}
+.work{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}
+.viewer{display:grid;grid-template-rows:auto 1fr auto;gap:8px;padding:10px;border-right:1px solid var(--line);min-width:0}
+.vtools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:14px;background:var(--panel2);border:1px solid var(--line);font-weight:500}
+.chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--fg)}
+.chip.rec[aria-pressed="true"]{background:rgba(255,93,108,.16);border-color:var(--rec)}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--rec)}
+.stage{position:relative;background:var(--stage);border-radius:var(--r1);display:grid;place-items:center;min-height:0;overflow:hidden}
+canvas#view{width:100%;max-width:100%;aspect-ratio:16/9;display:block;touch-action:none;cursor:grab}
+canvas#view.drag{cursor:grabbing}
+.hint{position:absolute;left:10px;top:10px;max-width:calc(100% - 20px);background:rgba(0,0,0,.72);border-radius:6px;padding:5px 9px;font-size:11.5px;color:#fff;pointer-events:none}
+.hint.rec{background:rgba(255,93,108,.9)}
+.transport{display:flex;align-items:center;gap:10px}
+.play{width:36px;height:36px;border-radius:50%;background:var(--fg);color:var(--page);display:grid;place-items:center;font-size:13px}
+.tc{font:500 12px var(--f-mono);color:var(--muted)}.tc b{color:var(--fg);font-weight:500}
+.insp{background:var(--panel);padding:12px;display:grid;gap:12px;align-content:start;min-width:0}
+.ihead b{display:block;font-size:13px}.ihead span{color:var(--muted);font-size:11.5px}
+.sec{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.sec h3{margin:0;font:600 11px var(--f-ui);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.preset{display:flex;align-items:center;gap:7px;height:32px;padding:0 9px;border-radius:var(--r1);background:var(--panel2);border:1px solid var(--line);text-align:left;font-size:12px}
+.preset:hover{border-color:var(--accent)}
+.preset svg{width:16px;height:16px;flex:none;stroke:var(--accent);fill:none;stroke-width:1.8}
+.row{display:grid;grid-template-columns:78px minmax(0,1fr) 46px;align-items:center;gap:8px}
+.row span{color:var(--muted)}.row output{font:500 11px var(--f-mono);text-align:right}
+input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.seg button{height:28px;border-radius:5px;background:var(--panel2);border:1px solid var(--line);font-size:11.5px}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}
+.keyinfo{font-size:11.5px;color:var(--muted)}
+.keyinfo b{color:var(--key);font-weight:600}
+.btn{height:30px;padding:0 10px;border-radius:var(--r1);background:var(--raised);font-weight:500}
+.btn.danger{color:#ff8a95}
+.btn:disabled{opacity:.4;cursor:default}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+.tl{border-top:1px solid var(--line);background:var(--panel);padding:8px 10px 12px;display:grid;gap:6px}
+.ruler{position:relative;height:20px;margin-left:110px;font:500 10px var(--f-mono);color:var(--dim);cursor:pointer;touch-action:none}
+.ruler i{position:absolute;top:2px;font-style:normal;transform:translateX(-50%)}
+.lanes{display:grid;gap:4px}
+.lane{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px;align-items:center}
+.lane .th{font-weight:500;color:var(--muted);font-size:11.5px}
+.track{position:relative;height:44px;border-radius:6px;background:var(--panel2)}
+.clip{position:absolute;top:3px;bottom:3px;border-radius:6px;border:2px solid var(--accent);background:var(--video);overflow:hidden;box-shadow:0 0 0 2px rgba(34,227,182,.35)}
+.clip.bg{border-color:#fff;box-shadow:none;background:#3e4f9e}
+.clip em{position:absolute;left:8px;top:3px;font-style:normal;font-size:10.5px;font-weight:600;background:rgba(0,0,0,.62);border-radius:4px;padding:0 5px}
+.clip .thumbs{position:absolute;inset:0;background-size:auto 100%;opacity:.55}
+.motion{position:absolute;left:0;right:0;bottom:4px;height:2px;background:rgba(255,207,74,.45)}
+.kf{position:absolute;bottom:-3px;width:14px;height:14px;margin-left:-7px;transform:rotate(45deg);background:var(--key);border:2px solid #3a2c00;border-radius:2px;cursor:ew-resize;touch-action:none;padding:0}
+.kf.sel{background:#fff;border-color:var(--key);box-shadow:0 0 0 3px rgba(255,207,74,.45)}
+.ph{position:absolute;top:-24px;bottom:-2px;width:2px;margin-left:-1px;background:var(--accent);pointer-events:none;z-index:3}
+.notes{max-width:1280px;margin:18px auto 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.note{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:12px 14px;display:grid;gap:6px;align-content:start}
+.note h2{margin:0;font-size:13px;text-wrap:balance}
+.note p,.note li{margin:0;color:var(--muted);line-height:1.5;max-width:65ch}
+.note ul{margin:0;padding-left:18px;display:grid;gap:3px}
+kbd{font:500 10.5px var(--f-mono);background:var(--raised);border-radius:4px;padding:1px 5px;color:var(--fg)}
+.credit{max-width:1280px;margin:14px auto 0;color:var(--dim);font-size:11px}
+@media (max-width:860px){.work{grid-template-columns:1fr}.viewer{border-right:0;border-bottom:1px solid var(--line)}.ruler{margin-left:0}.lane{grid-template-columns:1fr}.lane .th{display:none}}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+
+<div class="app" role="application" aria-label="Maquette de l'outil Mouvement d'EZcut">
+  <div class="bar"><span class="logo"><i>▶</i>EZcut</span><span class="name">Maquette — outil Mouvement</span><span class="tc">Exemple : Tears of Steel</span></div>
+  <div class="work">
+    <div class="viewer">
+      <div class="vtools">
+        <button class="chip" id="showPath" aria-pressed="true" title="Afficher le trajet de l'image dans l'aperçu">Trajet visible</button>
+        <button class="chip rec" id="rec" aria-pressed="false" title="Lecture au ralenti : l'image suit la souris tant que le bouton est enfoncé"><span class="dot"></span>Mimer le mouvement</button>
+        <span class="tc" style="margin-left:auto">Molette sur l'image : taille</span>
+      </div>
+      <div class="stage">
+        <canvas id="view" width="1280" height="720" aria-label="Aperçu : faites glisser l'image pour poser un point du mouvement"></canvas>
+        <div class="hint" id="hint">Placez la tête de lecture, puis faites glisser l'image : un point du mouvement est posé à cet instant.</div>
+      </div>
+      <div class="transport">
+        <button class="play" id="play" aria-label="Lecture">▶</button>
+        <span class="tc"><b id="tc">00:00:00</b> / 00:08:00</span>
+        <span class="tc" id="speed"></span>
+      </div>
+    </div>
+    <aside class="insp">
+      <div class="ihead"><b>poster-b.jpg</b><span>Image · piste Par-dessus · 8 s</span></div>
+      <div class="sec">
+        <h3>Mouvements tout faits</h3>
+        <div class="presets">
+          <button class="preset" data-p="in-left"><svg viewBox="0 0 16 16"><path d="M1 8h10M8 5l3 3-3 3M14 2v12"/></svg>Entrer à gauche</button>
+          <button class="preset" data-p="out-right"><svg viewBox="0 0 16 16"><path d="M2 2v12M5 8h10M12 5l3 3-3 3"/></svg>Sortir à droite</button>
+          <button class="preset" data-p="cross"><svg viewBox="0 0 16 16"><path d="M1 11c4-6 10-6 14 0M12 8l3 3-4 1"/></svg>Traverser</button>
+          <button class="preset" data-p="drop"><svg viewBox="0 0 16 16"><path d="M8 1v10M5 8l3 3 3-3M3 14h10"/></svg>Tomber et rebondir</button>
+          <button class="preset" data-p="zoom"><svg viewBox="0 0 16 16"><rect x="5" y="5" width="6" height="6"/><path d="M2 2l3 3M14 2l-3 3M2 14l3-3M14 14l-3-3"/></svg>Zoom avant</button>
+          <button class="preset" data-p="float"><svg viewBox="0 0 16 16"><path d="M1 9c2-3 4-3 7 0s5 3 7 0"/></svg>Flotter</button>
+        </div>
+      </div>
+      <div class="sec" id="keySec">
+        <h3>Point sélectionné <span class="keyinfo" id="keyinfo"></span></h3>
+        <label class="row"><span>Taille</span><input type="range" id="kScale" min="10" max="200" step="1"><output id="oScale"></output></label>
+        <label class="row"><span>Rotation</span><input type="range" id="kRot" min="-180" max="180" step="1"><output id="oRot"></output></label>
+        <label class="row"><span>Opacité</span><input type="range" id="kOp" min="0" max="100" step="1"><output id="oOp"></output></label>
+        <div class="row" style="grid-template-columns:78px 1fr"><span>Vers le suivant</span>
+          <div class="seg" id="ease" role="group" aria-label="Façon d'aller au point suivant">
+            <button data-e="smooth" title="Démarre et s'arrête en douceur">Doux</button>
+            <button data-e="linear" title="Vitesse constante">Régulier</button>
+            <button data-e="back" title="Dépasse un peu puis revient">Rebond</button>
+            <button data-e="hold" title="Reste immobile puis saute au point suivant">Saut</button>
+          </div></div>
+        <div class="actions">
+          <button class="btn danger" id="del">Supprimer le point</button>
+          <button class="btn danger" id="clear">Tout effacer</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <div class="tl">
+    <div class="ruler" id="ruler" aria-label="Règle : cliquez pour placer la tête de lecture"></div>
+    <div class="lanes">
+      <div class="lane"><span class="th">Par-dessus</span>
+        <div class="track" id="otrack"><div class="clip" id="oclip" style="left:0;right:0"><div class="thumbs" style="background-image:url(assets/poster-b.jpg)"></div><em>poster-b.jpg</em><div class="motion"></div></div><div class="ph" id="ph"></div></div></div>
+      <div class="lane"><span class="th">Vidéo</span>
+        <div class="track"><div class="clip bg" style="left:0;right:0"><div class="thumbs" style="background-image:url(assets/strip-a.jpg)"></div><em>clip-a.mp4</em></div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <section class="note">
+    <h2>1. Poser des points à la souris</h2>
+    <ul>
+      <li>Sélectionnez une image ou une vidéo de la piste « Par-dessus ».</li>
+      <li>Placez la tête de lecture, faites glisser l'image dans l'aperçu : un point (◆) est posé à cet instant. La molette change sa taille.</li>
+      <li>Entre deux points, l'image glisse toute seule, sur une courbe. Le trajet s'affiche en pointillés ; ses points se déplacent à la souris.</li>
+    </ul>
+  </section>
+  <section class="note">
+    <h2>2. Régler le rythme dans la timeline</h2>
+    <ul>
+      <li>Les points apparaissent en losanges jaunes sur le clip.</li>
+      <li>Les faire glisser change le moment ; un clic y amène la tête de lecture ; <kbd>Suppr</kbd> retire le point choisi.</li>
+      <li>Pour chaque point : Doux, Régulier, Rebond ou Saut vers le suivant.</li>
+    </ul>
+  </section>
+  <section class="note">
+    <h2>3. Mouvements tout faits</h2>
+    <p>Un clic pose les points d'un mouvement courant : entrer, sortir, traverser, tomber et rebondir, zoom, flotter. Ils se retouchent ensuite comme les autres. « Entrer » et « Sortir » partent de la position actuelle de l'image.</p>
+  </section>
+  <section class="note">
+    <h2>4. Mimer le mouvement</h2>
+    <p>La lecture passe au ralenti ; tant que le bouton de la souris est enfoncé, l'image suit la main. Au relâchement, le geste devient quelques points propres, modifiables. Pour un mouvement naturel sans rien calculer.</p>
+  </section>
+  <section class="note">
+    <h2>Dans EZcut</h2>
+    <ul>
+      <li>Même rendu à l'aperçu et à l'export ; s'applique aussi aux titres et aux vidéos en incrustation.</li>
+      <li>Annulable point par point (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) ; enregistré dans le projet.</li>
+      <li>Sans point, rien ne change : l'image reste où vous l'avez posée.</li>
+    </ul>
+  </section>
+</div>
+<p class="credit">Images : <i>Tears of Steel</i>, CC BY 3.0, © Blender Foundation, mango.blender.org. Maquette : le comportement est celui prévu dans EZcut.</p>
+
+<script>
+(() => {
+  const DUR = 8, view = document.getElementById('view'), g = view.getContext('2d');
+  const W = view.width, H = view.height;
+  const vid = document.createElement('video'); vid.src = 'assets/clip-a.mp4'; vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
+  const img = new Image(); img.src = 'assets/poster-b.jpg';
+  // Un point : instant t (s), position (centre, fraction du cadre), taille (fraction de la largeur), rotation (°), opacité, façon d'aller au suivant.
+  let keys = [], sel = -1, t = 0, playing = false, last = 0, showPath = true, recording = false, rec = null;
+  const base = { x: .72, y: .3, s: .34, r: 0, o: 1 };
+  const ease = {
+    linear: k => k, smooth: k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2,
+    back: k => { const c = 1.70158 * 1.3, c3 = c + 1; return 1 + c3 * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); }, hold: k => (k < 1 ? 0 : 1),
+  };
+  const sorted = () => keys.sort((a, b) => a.t - b.t);
+  const lerp = (a, b, k) => a + (b - a) * k;
+  // Position entre deux points sur une courbe qui passe par tous les points (Catmull-Rom).
+  const cr = (p0, p1, p2, p3, k) => { const k2 = k * k, k3 = k2 * k; return .5 * (2 * p1 + (-p0 + p2) * k + (2 * p0 - 5 * p1 + 4 * p2 - p3) * k2 + (-p0 + 3 * p1 - 3 * p2 + p3) * k3); };
+  function stateAt(time) {
+    if (!keys.length) return { ...base };
+    if (time <= keys[0].t) return { ...keys[0] };
+    const n = keys.length - 1;
+    if (time >= keys[n].t) return { ...keys[n] };
+    let i = 0; while (keys[i + 1].t < time) i++;
+    const a = keys[i], b = keys[i + 1], k = ease[a.e]((time - a.t) / Math.max(1e-6, b.t - a.t));
+    const p0 = keys[Math.max(0, i - 1)], p3 = keys[Math.min(n, i + 2)];
+    return { x: cr(p0.x, a.x, b.x, p3.x, k), y: cr(p0.y, a.y, b.y, p3.y, k), s: lerp(a.s, b.s, k), r: lerp(a.r, b.r, k), o: lerp(a.o, b.o, k) };
+  }
+  /** Pose ou met à jour le point à l'instant courant (à moins de 0,12 s d'un point existant, c'est lui qui change). */
+  function keyHere(patch) {
+    let i = keys.findIndex(k => Math.abs(k.t - t) < .12);
+    if (i < 0) { const k = { ...stateAt(t), e: 'smooth', ...patch, t }; keys.push(k); sorted(); i = keys.indexOf(k); }
+    else Object.assign(keys[i], patch);
+    sel = i; sync();
+  }
+  // ---------- dessin ----------
+  function rect(st) { const w = st.s * W, h = w * (img.naturalHeight || 9) / (img.naturalWidth || 16); return { w, h, cx: st.x * W, cy: st.y * H }; }
+  function draw() {
+    g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+    if (vid.readyState >= 2) g.drawImage(vid, 0, 0, W, H);
+    if (showPath && keys.length > 1) {
+      g.save(); g.setLineDash([7, 7]); g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,207,74,.9)'; g.beginPath();
+      for (let i = 0; i <= 160; i++) { const s = stateAt(keys[0].t + (keys.at(-1).t - keys[0].t) * i / 160); i ? g.lineTo(s.x * W, s.y * H) : g.moveTo(s.x * W, s.y * H); }
+      g.stroke(); g.restore();
+    }
+    const st = stateAt(t), r = rect(st);
+    if (img.complete) {
+      g.save(); g.globalAlpha = st.o; g.translate(r.cx, r.cy); g.rotate(st.r * Math.PI / 180);
+      g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 18; g.drawImage(img, -r.w / 2, -r.h / 2, r.w, r.h);
+      g.shadowBlur = 0; g.globalAlpha = 1; g.strokeStyle = recording ? '#ff5d6c' : '#22e3b6'; g.lineWidth = 3; g.strokeRect(-r.w / 2, -r.h / 2, r.w, r.h); g.restore();
+    }
+    if (showPath) keys.forEach((k, i) => {
+      g.save(); g.translate(k.x * W, k.y * H); g.rotate(Math.PI / 4);
+      g.fillStyle = i === sel ? '#fff' : '#ffcf4a'; g.strokeStyle = '#3a2c00'; g.lineWidth = 2.5; g.fillRect(-9, -9, 18, 18); g.strokeRect(-9, -9, 18, 18); g.restore();
+    });
+    if (rec) { g.save(); g.strokeStyle = '#ff5d6c'; g.lineWidth = 3; g.beginPath(); rec.pts.forEach((p, i) => (i ? g.lineTo(p.x * W, p.y * H) : g.moveTo(p.x * W, p.y * H))); g.stroke(); g.restore(); }
+  }
+  // ---------- boucle ----------
+  const tc = s => { const f = Math.floor((s % 1) * 30); return `00:${String(Math.floor(s)).padStart(2, '0')}:${String(f).padStart(2, '0')}`; };
+  function tick(now) {
+    const dt = Math.min(.1, (now - last) / 1000 || 0); last = now;
+    if (playing) { t += dt * (recording ? .5 : 1); if (t >= DUR) { t = recording ? DUR : 0; if (recording) stop(); } }
+    if (rec) rec.pts.push({ t, x: rec.x, y: rec.y });
+    // La vidéo de fond suit l'horloge de la maquette.
+    if (vid.readyState >= 1 && Math.abs(vid.currentTime - (t % (vid.duration || DUR))) > .25) vid.currentTime = t % (vid.duration || DUR);
+    if (playing && vid.paused) vid.play().catch(() => {}); if (!playing && !vid.paused) vid.pause();
+    vid.playbackRate = recording ? .5 : 1;
+    draw(); place(); requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  // ---------- aperçu : glisser l'image, ses points, molette ----------
+  const at = e => { const b = view.getBoundingClientRect(); return { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height }; };
+  function hitKey(p) { const b = view.getBoundingClientRect(), px = 14 / b.width; return showPath ? keys.findIndex(k => Math.abs(k.x - p.x) < px && Math.abs(k.y - p.y) < px * 1.8) : -1; }
+  function hitImage(p) { const st = stateAt(t), r = rect(st); return Math.abs(p.x * W - r.cx) < r.w / 2 && Math.abs(p.y * H - r.cy) < r.h / 2; }
+  view.addEventListener('pointerdown', e => {
+    const p = at(e); view.setPointerCapture(e.pointerId);
+    if (recording) { rec = { x: p.x, y: p.y, pts: [], t0: t }; if (!playing) setPlay(true); return; }
+    const k = hitKey(p);
+    if (k >= 0) { sel = k; sync(); const move = ev => { const q = at(ev); keys[k].x = q.x; keys[k].y = q.y; }; drag(move); return; }
+    if (!hitImage(p)) return;
+    setPlay(false);
+    const st = stateAt(t), off = { x: st.x - p.x, y: st.y - p.y }; view.classList.add('drag');
+    drag(ev => { const q = at(ev); keyHere({ x: q.x + off.x, y: q.y + off.y }); }, () => view.classList.remove('drag'));
+  });
+  view.addEventListener('pointermove', e => { if (rec) { const p = at(e); rec.x = p.x; rec.y = p.y; } });
+  view.addEventListener('pointerup', () => { if (rec) finishRec(); });
+  view.addEventListener('wheel', e => { if (!hitImage(at(e))) return; e.preventDefault(); setPlay(false); keyHere({ s: Math.max(.06, Math.min(1.2, stateAt(t).s * Math.exp(-e.deltaY * .0012))) }); }, { passive: false });
+  function drag(move, end) {
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); end?.(); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up);
+  }
+  // Geste mimé → quelques points : on garde ceux qui s'écartent le plus de la ligne droite (Douglas-Peucker).
+  function finishRec() {
+    const pts = rec.pts; rec = null;
+    if (pts.length < 2) return;
+    const keep = new Set([0, pts.length - 1]);
+    const dp = (a, b) => { let m = -1, d = .012; for (let i = a + 1; i < b; i++) { const k = (pts[i].t - pts[a].t) / (pts[b].t - pts[a].t || 1), x = lerp(pts[a].x, pts[b].x, k), y = lerp(pts[a].y, pts[b].y, k), e = Math.hypot(pts[i].x - x, pts[i].y - y); if (e > d) { d = e; m = i; } } if (m > 0) { keep.add(m); dp(a, m); dp(m, b); } };
+    dp(0, pts.length - 1);
+    const t0 = pts[0].t, t1 = pts.at(-1).t, st = stateAt(t0);
+    keys = keys.filter(k => k.t < t0 - .05 || k.t > t1 + .05);
+    [...keep].sort((a, b) => a - b).forEach(i => keys.push({ t: pts[i].t, x: pts[i].x, y: pts[i].y, s: st.s, r: st.r, o: st.o, e: 'linear' }));
+    sorted(); sel = -1; stop(); sync();
+  }
+  // ---------- tout faits ----------
+  document.querySelectorAll('.preset').forEach(b => b.addEventListener('click', () => {
+    const st = stateAt(t), here = { x: st.x, y: st.y, s: st.s, r: st.r, o: 1 }, w = st.s / 2 + .02, P = b.dataset.p;
+    const K = (time, o, e = 'smooth') => ({ t: Math.max(0, Math.min(DUR, time)), ...here, ...o, e });
+    if (P === 'in-left') keys = [K(0, { x: -w }), K(1.2, {}), ...keys.filter(k => k.t > 1.3)];
+    if (P === 'out-right') keys = [...keys.filter(k => k.t < DUR - 1.3), K(DUR - 1.2, {}), K(DUR, { x: 1 + w })];
+    if (P === 'cross') keys = [K(0, { x: -w, y: .62, r: -12 }), K(DUR / 2, { x: .5, y: .3, r: 0 }), K(DUR, { x: 1 + w, y: .62, r: 12 })];
+    if (P === 'drop') keys = [K(0, { y: -st.s / 2 - .05 }, 'back'), K(1.1, {}), ...keys.filter(k => k.t > 1.2)];
+    if (P === 'zoom') keys = [K(0, { s: here.s * .55, o: 0 }), K(1, { o: 1 }, 'linear'), K(DUR, { s: Math.min(1.1, here.s * 1.6) })];
+    if (P === 'float') keys = Array.from({ length: 5 }, (_, i) => K(i * DUR / 4, { y: here.y + (i % 2 ? .035 : -.035), r: i % 2 ? 2 : -2 }));
+    sorted(); sel = -1; t = keys[0]?.t ?? 0; setPlay(true); sync();
+  }));
+  // ---------- panneau du point ----------
+  const $ = id => document.getElementById(id);
+  function sync() {
+    const k = keys[sel], on = !!k;
+    $('keyinfo').innerHTML = on ? `<b>◆ ${tc(k.t)}</b> · ${sel + 1} sur ${keys.length}` : keys.length ? `${keys.length} points · choisissez-en un` : 'aucun point';
+    ['kScale', 'kRot', 'kOp', 'del'].forEach(id => ($(id).disabled = !on));
+    $('clear').disabled = !keys.length;
+    document.querySelectorAll('#ease button').forEach(b => { b.disabled = !on; b.setAttribute('aria-pressed', String(on && k.e === b.dataset.e)); });
+    if (on) { $('kScale').value = Math.round(k.s / base.s * 100); $('kRot').value = Math.round(k.r); $('kOp').value = Math.round(k.o * 100); }
+    $('oScale').textContent = on ? $('kScale').value + ' %' : '—'; $('oRot').textContent = on ? k.r.toFixed(0) + '°' : '—'; $('oOp').textContent = on ? Math.round(k.o * 100) + ' %' : '—';
+    renderKeys();
+  }
+  $('kScale').addEventListener('input', e => { keys[sel].s = base.s * e.target.value / 100; sync(); });
+  $('kRot').addEventListener('input', e => { keys[sel].r = +e.target.value; sync(); });
+  $('kOp').addEventListener('input', e => { keys[sel].o = e.target.value / 100; sync(); });
+  document.querySelectorAll('#ease button').forEach(b => b.addEventListener('click', () => { keys[sel].e = b.dataset.e; sync(); }));
+  $('del').addEventListener('click', () => { keys.splice(sel, 1); sel = -1; sync(); });
+  $('clear').addEventListener('click', () => { keys = []; sel = -1; sync(); });
+  addEventListener('keydown', e => { if ((e.key === 'Delete' || e.key === 'Backspace') && sel >= 0 && document.activeElement?.tagName !== 'INPUT') { keys.splice(sel, 1); sel = -1; sync(); } if (e.code === 'Space' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); setPlay(!playing); } });
+  // ---------- timeline ----------
+  const track = $('otrack'), clipEl = $('oclip'), ph = $('ph');
+  const ruler = $('ruler');
+  for (let s = 0; s <= DUR; s++) { const i = document.createElement('i'); i.style.left = (s / DUR * 100) + '%'; i.textContent = '00:0' + s; ruler.appendChild(i); }
+  const timeOf = (el, x) => { const b = el.getBoundingClientRect(); return Math.max(0, Math.min(DUR, (x - b.left) / b.width * DUR)); };
+  ruler.addEventListener('pointerdown', e => { setPlay(false); t = timeOf(ruler, e.clientX); ruler.setPointerCapture(e.pointerId); const m = ev => { t = timeOf(ruler, ev.clientX); }; drag(m); });
+  function renderKeys() {
+    clipEl.querySelectorAll('.kf').forEach(n => n.remove());
+    keys.forEach((k, i) => {
+      const d = document.createElement('button'); d.className = 'kf' + (i === sel ? ' sel' : ''); d.style.left = (k.t / DUR * 100) + '%';
+      d.title = `Point à ${tc(k.t)} — glisser : changer le moment · clic : y aller`; d.setAttribute('aria-label', `Point du mouvement à ${tc(k.t)}`);
+      d.addEventListener('pointerdown', e => {
+        e.stopPropagation(); setPlay(false); sel = i; t = k.t; const x0 = e.clientX; let moved = false;
+        drag(ev => { if (Math.abs(ev.clientX - x0) > 3) moved = true; if (!moved) return; k.t = timeOf(clipEl, ev.clientX); t = k.t; sorted(); sel = keys.indexOf(k); place(); }, () => sync());
+      });
+      clipEl.appendChild(d);
+    });
+  }
+  function place() { ph.style.left = (t / DUR * 100) + '%'; $('tc').textContent = tc(t); clipEl.querySelectorAll('.kf').forEach((d, i) => { if (keys[i]) d.style.left = (keys[i].t / DUR * 100) + '%'; }); }
+  // ---------- lecture, mime ----------
+  function setPlay(on) { playing = on; $('play').textContent = on ? '❚❚' : '▶'; $('play').setAttribute('aria-label', on ? 'Pause' : 'Lecture'); }
+  $('play').addEventListener('click', () => setPlay(!playing));
+  $('showPath').addEventListener('click', e => { showPath = !showPath; e.currentTarget.setAttribute('aria-pressed', String(showPath)); });
+  function stop() { recording = false; $('rec').setAttribute('aria-pressed', 'false'); $('speed').textContent = ''; setPlay(false); hint(); }
+  $('rec').addEventListener('click', () => {
+    if (recording) { stop(); return; }
+    recording = true; $('rec').setAttribute('aria-pressed', 'true'); $('speed').textContent = 'Ralenti × 0,5'; setPlay(false); hint();
+  });
+  function hint() {
+    const h = $('hint'); h.classList.toggle('rec', recording);
+    h.textContent = recording ? 'Mimer : appuyez sur la souris dans l\'aperçu et bougez, l\'image suit votre main. Relâchez pour finir.' : 'Placez la tête de lecture, puis faites glisser l\'image : un point du mouvement est posé à cet instant.';
+  }
+  // Exemple chargé à l'ouverture : l'image entre par la gauche, traverse en courbe, et repart par la droite.
+  img.onload = () => {
+    keys = [{ t: 0, x: -.2, y: .66, s: .3, r: -10, o: 1, e: 'smooth' }, { t: 2.4, x: .3, y: .32, s: .34, r: 0, o: 1, e: 'smooth' },
+      { t: 5.2, x: .7, y: .42, s: .4, r: 4, o: 1, e: 'back' }, { t: 8, x: 1.22, y: .7, s: .3, r: 12, o: 1, e: 'smooth' }];
+    sel = 1; t = 1.2; sync();
+  };
+  sync();
+})();
+</script>

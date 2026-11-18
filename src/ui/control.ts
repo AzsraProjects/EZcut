@@ -2,8 +2,9 @@
  *  Chaque commande passe par les mêmes opérations que les gestes de l'utilisateur, donc reste annulable par Ctrl+Z,
  *  et le projet qui en résulte est revalidé comme un fichier venu de l'extérieur. */
 import { addMarker, patchMarker, removeMarker, setTrack, addFx, addOverlay, addSound, addText, addTrack, appendClip, clipsOf, detachAudio, findClip, hasTrack, isBase, isSound, kindOf, lockedChange, moveClip, moveFree, moveToTrack, moveTrack, patchClip, projectDuration, removeClip, removeFx, removeTrack, setTransition, spanWhole, splitAt, startsOf, trimClip } from '../core/ops';
-import { parseProject } from '../core/project';
-import { defaultText, MAX_EXTRA_TRACKS, type Clip, type Project, type TrackId, type TrackKind } from '../core/types';
+import { motionKeys, parseProject } from '../core/project';
+import { applyPreset, MAX_KEYS, motionAt, PRESETS, type Preset } from '../core/motion';
+import { defaultText, MAX_EXTRA_TRACKS, MAX_VOLUME, type Clip, type Project, type TrackId, type TrackKind } from '../core/types';
 import { ez, type ControlRequest, type ImportedFile } from '../desktop/api';
 import { catalog, defaultsOf, transitionDefaults, type CatEffect, type CatItem } from '../effects/catalog';
 import { player } from '../engine/player';
@@ -21,6 +22,8 @@ const str = (v: unknown, name: string) => (typeof v === 'string' && v ? v : fail
 const num = (v: unknown, name: string) => (typeof v === 'number' && Number.isFinite(v) ? v : fail(`Paramètre « ${name} » : nombre attendu.`));
 const optNum = (v: unknown, name: string) => (v === undefined ? undefined : num(v, name));
 const isObj = (v: unknown): v is P => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** Annulation d'un export lancé par le lien, demandée depuis la fenêtre d'export. */
+export const linkCancel = { on: false };
 
 /** Applique une modification venue de l'assistant : le résultat est revalidé (types, bornes, pistes sans recouvrement) avant d'entrer dans le projet. */
 function commit(next: Project): Project {
@@ -50,6 +53,7 @@ function describeClip(p: Project, track: TrackId, c: Clip, start: number) {
     ...(c.volume !== 1 || c.fadeIn || c.fadeOut ? { volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut } : {}),
     ...(c.vfadeIn || c.vfadeOut ? { vfadeIn: c.vfadeIn, vfadeOut: c.vfadeOut } : {}),
     ...(c.still ? { still: true } : {}),
+    ...(c.keys?.length ? { motion: c.keys } : {}),
     ...(c.opacity !== 1 || c.blend !== 'normal' ? { opacity: c.opacity, blend: c.blend } : {}),
     ...(c.transform.scale !== 1 || c.transform.x || c.transform.y || c.transform.rot || c.transform.flipH || c.transform.flipV ? { transform: c.transform } : {}),
     ...(c.off ? { disabled: true } : {}),
@@ -60,7 +64,7 @@ function status() {
   const st = S(), p = st.project;
   return {
     project: { name: p.name, width: p.width, height: p.height, fps: p.fps, duration: +projectDuration(p).toFixed(3), file: st.filePath, unsaved: st.dirty },
-    playhead: +player.t.toFixed(3), playing: player.playing, selection: st.sel,
+    playhead: +player.t.toFixed(3), playing: player.playing, selection: st.sel, picked: st.picked,
     media: p.media.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, hasAudio: m.hasAudio, path: m.path, missing: !m.url })),
     trackOrder: p.order,
     tracks: Object.fromEntries(p.order.map(t => { const s = startsOf(p, t); return [t, clipsOf(p, t).map((c, i) => describeClip(p, t, c, s[i]))]; })),
@@ -177,11 +181,42 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     if (p.wholeVideo === true) next = spanWhole(next, id);
     next = patchClip(next, id, c => {
       for (const k of ['volume', 'fadeIn', 'fadeOut', 'vfadeIn', 'vfadeOut', 'opacity'] as const) if (p[k] !== undefined) c[k] = num(p[k], k);
+      c.volume = Math.max(0, Math.min(MAX_VOLUME, c.volume)); c.opacity = Math.max(0, Math.min(1, c.opacity));
       if (typeof p.blend === 'string') c.blend = p.blend as Clip['blend'];
-      if (isObj(p.transform)) Object.assign(c.transform, p.transform);
+      if (isObj(p.transform)) { if (c.keys?.length) fail('Ce clip a un mouvement : sa position se règle point par point avec ezcut_motion (ou action clear pour le retirer).'); Object.assign(c.transform, p.transform); }
       if (isObj(p.color)) Object.assign(c.color, p.color);
       if (isObj(p.text) && c.text) Object.assign(c.text, p.text);
     });
+    const g = findClip(commit(next), id);
+    return g ? describeClip(S().project, g.track, g.clip, g.start) : {};
+  },
+  motion: p => {
+    const id = str(p.clipId, 'clipId'), f = findClip(S().project, id);
+    if (!f) fail(`Clip introuvable : ${id}.`);
+    if (isSound(f!.track)) fail('Un clip de son ne bouge pas : le mouvement vaut pour les vidéos, images et titres.');
+    const action = p.action ?? 'set';
+    let next = S().project;
+    if (action === 'clear') {
+      // L'image garde la position qu'elle a à la tête de lecture (ou au début du clip).
+      const local = Math.max(0, Math.min(f!.clip.dur, player.t - f!.start)), m = motionAt(f!.clip, local);
+      next = patchClip(next, id, c => { if (c.keys?.length) { c.transform = { ...m.transform }; c.opacity = m.opacity; } delete c.keys; });
+    }
+    else if (action === 'preset') {
+      if (!(PRESETS as readonly string[]).includes(p.preset as string)) fail(`Paramètre « preset » : ${PRESETS.join(', ')}.`);
+      const at = p.at !== undefined ? num(p.at, 'at') : 0, half = player.halfSize(f!.clip) ?? { w: 0.5, h: 0.5 }, sc = motionAt(f!.clip, at).transform.scale;
+      next = patchClip(next, id, c => { c.keys = applyPreset(f!.clip, p.preset as Preset, at, { w: half.w * sc, h: half.h * sc }); });
+    } else if (action === 'set') {
+      if (!Array.isArray(p.keys)) fail('Paramètre « keys » : liste de points { t, x, y, scale, rot, opacity, ease }.');
+      // Mêmes bornes qu'à l'ouverture d'un projet : on passe par la lecture d'un clip.
+      // Un champ absent ou non numérique reprend la valeur du clip à cet instant ; t est borné au clip.
+      const base = f!.clip, keys = (p.keys as unknown[]).slice(0, MAX_KEYS).filter(isObj).map(k => {
+        const t = Math.max(0, Math.min(base.dur, typeof k.t === 'number' && Number.isFinite(k.t) ? k.t : 0)), m = motionAt(base, t);
+        const n = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+        return { t, x: n(k.x, m.transform.x), y: n(k.y, m.transform.y), scale: n(k.scale, m.transform.scale), rot: n(k.rot, m.transform.rot), opacity: n(k.opacity, m.opacity), ease: k.ease };
+      });
+      const parsed = motionKeys(keys);
+      next = patchClip(next, id, c => { if (parsed?.length) c.keys = parsed; else delete c.keys; });
+    } else fail('Paramètre « action » : set, preset ou clear.');
     const g = findClip(commit(next), id);
     return g ? describeClip(S().project, g.track, g.clip, g.start) : {};
   },
@@ -252,6 +287,7 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     }
     if (action !== 'set') fail('Paramètre « action » : set, add, remove ou move.');
     const patch = Object.fromEntries((['muted', 'hidden', 'locked'] as const).filter(k => typeof p[k] === 'boolean').map(k => [k, p[k]]));
+    if (p.volume !== undefined) Object.assign(patch, { volume: Math.max(0, Math.min(MAX_VOLUME, num(p.volume, 'volume'))) });
     commit(setTrack(project, track, patch));
     return status().trackStates;
   },
@@ -267,11 +303,25 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
   undo: () => { S().undo(); return status(); },
   redo: () => { S().redo(); return status(); },
   export: async p => {
-    const r = await exportProject(S().project, { height: optNum(p.height, 'height') ?? 1080, fps: optNum(p.fps, 'fps') ?? S().project.fps, codec: p.codec === 'hevc' ? 'hevc' : 'h264' }, () => {}, () => false);
-    if (!r.ok) fail(r.error ?? 'L\'export a échoué.');
-    return { path: r.path, frames: r.frames, seconds: r.seconds && +r.seconds.toFixed(1) };
+    // L'export se voit dans la fenêtre d'export (avancement, temps restant) et s'annule comme un export lancé à la main.
+    linkCancel.on = false;
+    player.pause();
+    const wasOpen = S().exportOpen;
+    S().set({ exportOpen: true, linkExport: [0, 1] });
+    let shown = 0;
+    try {
+      const r = await exportProject(S().project, { height: optNum(p.height, 'height') ?? 1080, fps: optNum(p.fps, 'fps') ?? S().project.fps, codec: p.codec === 'hevc' ? 'hevc' : 'h264' },
+        (done, total) => { const now = performance.now(); if (done === total || now - shown > 200) { shown = now; S().set({ linkExport: [done, total] }); } }, () => linkCancel.on);
+      if (r.cancelled) fail('Export annulé dans EZcut.');
+      if (!r.ok) fail(r.error ?? 'L\'export a échoué.');
+      S().notify(`Vidéo exportée en ${r.seconds?.toFixed(0)} s.`);
+      return { path: r.path, frames: r.frames, seconds: r.seconds && +r.seconds.toFixed(1) };
+    } finally { S().set({ exportOpen: wasOpen, linkExport: null }); }
   },
 };
+
+/** Commandes acceptées pendant un export : elles ne touchent ni au projet ni au moteur de rendu. */
+const READ_ONLY = new Set(['status', 'catalog']);
 
 /** Branche le lien : à appeler une fois au démarrage de l'interface. */
 export function connectControl() {
@@ -280,6 +330,8 @@ export function connectControl() {
     try {
       if (!h) throw new Error(`Commande inconnue : ${req.method}`);
       if (!catalog.ready) throw new Error('EZcut démarre encore : réessayez dans un instant.');
+      // Pendant un export (lancé à la main ou par le lien), le projet et le moteur de rendu ne doivent pas changer.
+      if (player.exporting && !READ_ONLY.has(req.method)) throw new Error('Un export est en cours dans EZcut : attendez la fin ou annulez-le depuis la fenêtre « Exporter ».');
       await ez!.controlReply(req.id, true, await h(req.params ?? {}));
     } catch (e) { await ez!.controlReply(req.id, false, String((e as Error).message ?? e)); }
   });

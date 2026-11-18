@@ -133,6 +133,36 @@ function run(cmd, args, timeoutMs = 15000) {
   });
 }
 
+/* ---------- bandes d'images de la timeline ---------- */
+// FFmpeg ne décode que les images clés (très rapide, sans toucher au décodeur de l'aperçu), en assemble n côte à côte
+// dans un JPEG, et le garde en cache : un projet rouvert retrouve ses vignettes aussitôt.
+const SPRITE_JOBS = 2;
+let spriteRunning = 0;
+const spriteQueue = [];
+const spriteDir = () => path.join(app.getPath('userData'), 'thumbs');
+async function spriteOf(file, n, dur, w, h) {
+  if (!FFMPEG || typeof file !== 'string' || !allowed.has(file)) return null;
+  n = Math.round(num(n, 1, 64, 1)); dur = num(dur, 0, 86400 * 4, 0); w = Math.round(num(w, 16, 640, 320)); h = Math.round(num(h, 16, 360, 180));
+  if (!dur) return null;
+  let stat;
+  try { stat = fs.statSync(file); } catch { return null; }
+  const key = require('node:crypto').createHash('sha1').update([file, stat.size, stat.mtimeMs, n, dur.toFixed(3), w, h, 1].join('|')).digest('hex');
+  const out = path.join(spriteDir(), key + '.jpg');
+  try { return new Uint8Array(fs.readFileSync(out)); } catch { /* pas encore en cache */ }
+  if (spriteRunning >= SPRITE_JOBS) await new Promise(r => spriteQueue.push(r));
+  spriteRunning++;
+  try {
+    fs.mkdirSync(spriteDir(), { recursive: true });
+    const tmp = out + '.tmp.jpg';
+    // fps=n/dur sur les seules images clés : l'image clé la plus proche de chaque instant voulu, répétée au besoin.
+    const r = await run(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-threads', '2', '-protocol_whitelist', 'file', '-skip_frame', 'nokey', '-i', file, '-an', '-sn',
+      '-vf', `fps=${n}/${dur.toFixed(3)},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},tile=${n}x1`, '-frames:v', '1', '-q:v', '5', tmp], 30000);
+    if (r.code !== 0 || !fs.existsSync(tmp)) { log.warn('vignettes', 'bande d\'images impossible', { fichier: path.basename(file), erreur: r.err.slice(0, 300) }); try { fs.unlinkSync(tmp); } catch { /* rien */ } return null; }
+    fs.renameSync(tmp, out);
+    return new Uint8Array(fs.readFileSync(out));
+  } finally { spriteRunning--; spriteQueue.shift()?.(); }
+}
+
 async function probe(file) {
   const kind = kindOf(file);
   allowed.add(file);
@@ -213,7 +243,7 @@ let job = null, starting = false, lastExport = null, exportArgs = null, controlO
 function audioGraph(tracks, total) {
   // Chaque piste devient une suite de segments (son du fichier ou silence), puis les pistes sont mixées.
   const inputs = [], filters = [], mixed = [];
-  let n = 1, count = 0; // l'entrée 0 est la vidéo brute
+  let n = 1, count = 0, boosted = false; // l'entrée 0 est la vidéo brute
   (Array.isArray(tracks) ? tracks.slice(0, MAX_AUDIO_TRACKS) : []).forEach((segs, ti) => {
     const labels = [];
     (Array.isArray(segs) ? segs : []).forEach((s, si) => {
@@ -223,16 +253,19 @@ function audioGraph(tracks, total) {
         inputs.push('-protocol_whitelist', 'file', '-ss', String(num(s.in, 0, 86400 * 4, 0)), '-t', String(dur), '-i', s.path);
         const fi = num(s.fadeIn, 0, dur, 0), fo = num(s.fadeOut, 0, dur - fi, 0);
         const fades = (fi > 0 ? `,afade=t=in:st=0:d=${fi}` : '') + (fo > 0 ? `,afade=t=out:st=${Math.max(0, dur - fo)}:d=${fo}` : '');
-        filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${num(s.volume, 0, 4, 1)}${fades}[${lab}]`);
+        filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${num(s.volume, 0, 16, 1)}${fades}[${lab}]`);
+        if (num(s.volume, 0, 16, 1) > 1) boosted = true;
         n++;
       } else filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${dur}[${lab}]`);
       labels.push(`[${lab}]`);
     });
     if (labels.length) { filters.push(`${labels.join('')}concat=n=${labels.length}:v=0:a=1[trk${ti}]`); mixed.push(`[trk${ti}]`); }
   });
+  // Son amplifié au-delà de 100 % : un limiteur retient les crêtes au lieu de les laisser saturer.
+  const limit = boosted ? ',alimiter=limit=0.95:level=0:attack=2:release=60' : '';
   if (!mixed.length) filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${total}[aout]`);
-  else if (mixed.length === 1) filters.push(`${mixed[0]}apad,atrim=duration=${total}[aout]`);
-  else filters.push(`${mixed.join('')}amix=inputs=${mixed.length}:duration=longest:normalize=0,apad,atrim=duration=${total}[aout]`);
+  else if (mixed.length === 1) filters.push(`${mixed[0]}apad,atrim=duration=${total}${limit}[aout]`);
+  else filters.push(`${mixed.join('')}amix=inputs=${mixed.length}:duration=longest:normalize=0,apad,atrim=duration=${total}${limit}[aout]`);
   return { inputs, filters };
 }
 
@@ -323,6 +356,17 @@ function setupUpdates(win) {
 let mainWin = null, callId = 0;
 const waiting = new Map();
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+/* ---------- projets récents ---------- */
+// La liste ne contient que des fichiers que l'utilisateur a lui-même ouverts ou enregistrés : l'interface ne peut rouvrir
+// qu'eux, jamais un chemin de son choix.
+const MAX_RECENT = 12;
+const recentList = () => { const r = readSettings().recent; return Array.isArray(r) ? r.filter(f => typeof f === 'string').slice(0, MAX_RECENT) : []; };
+function addRecent(file) { if (typeof file === 'string' && file) writeSettings({ recent: [file, ...recentList().filter(f => f !== file)].slice(0, MAX_RECENT) }); }
+function recentInfo() {
+  return recentList().flatMap(file => {
+    try { const s = fs.statSync(file); return s.isFile() ? [{ path: file, name: path.basename(file, path.extname(file)), folder: path.dirname(file), modified: s.mtimeMs }] : []; } catch { return []; }
+  }).slice(0, 8);
+}
 const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { return {}; } };
 const writeSettings = patch => { try { fs.writeFileSync(settingsFile(), JSON.stringify({ ...readSettings(), ...patch })); } catch (e) { log.warn('réglages', 'écriture impossible', e); } };
 
@@ -455,6 +499,7 @@ app.whenReady().then(() => {
   handle('media:import', async (_e, paths) => { const out = await probeAll(paths); remember(out.map(f => f.path)); return out; });
   handle('media:reveal', (_e, p) => { if (typeof p === 'string' && allowed.has(p) && fs.existsSync(p)) shell.showItemInFolder(p); });
   handle('media:relink', (e, paths) => relink(winOf(e), paths));
+  handle('media:sprite', (_e, file, n, dur, w, h) => spriteOf(file, n, dur, w, h));
   // Capture de l'aperçu : l'interface fournit l'image, l'emplacement vient toujours du dialogue.
   handle('snapshot:save', async (e, bytes, name) => {
     const buf = bytes instanceof Uint8Array ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
@@ -479,6 +524,21 @@ app.whenReady().then(() => {
     }
     // Écriture atomique : un plantage en cours d'écriture ne détruit pas le projet existant.
     fs.writeFileSync(projectPath + '.tmp', json, 'utf8'); fs.renameSync(projectPath + '.tmp', projectPath);
+    addRecent(projectPath);
+    return projectPath;
+  });
+  handle('project:recent', () => recentInfo());
+  handle('project:open-recent', (_e, file) => {
+    if (typeof file !== 'string' || !recentList().includes(file)) return null;
+    try { if (fs.statSync(file).size > MAX_PROJECT_BYTES) return { path: file, json: '' }; } catch { return null; }
+    pendingOpen = file;
+    return { path: file, json: fs.readFileSync(file, 'utf8') };
+  });
+  handle('project:forget-recent', (_e, file) => { writeSettings({ recent: recentList().filter(f => f !== file) }); });
+  // Enregistrement automatique : seulement dans le fichier déjà choisi par un dialogue, jamais ailleurs, et sans rien demander.
+  handle('project:autosave', (_e, json) => {
+    if (typeof json !== 'string' || json.length > MAX_PROJECT_BYTES || !projectPath) return null;
+    fs.writeFileSync(projectPath + '.tmp', json, 'utf8'); fs.renameSync(projectPath + '.tmp', projectPath);
     return projectPath;
   });
   handle('project:open', async e => {
@@ -490,7 +550,7 @@ app.whenReady().then(() => {
     return { path: file, json: fs.readFileSync(file, 'utf8') };
   });
   // Le fichier était bien un projet : il devient le projet courant. Sinon, le projet en cours et ses médias restent intacts.
-  handle('project:opened', () => { if (!pendingOpen) return; projectPath = pendingOpen; pendingOpen = null; allowed.clear(); });
+  handle('project:opened', () => { if (!pendingOpen) return; projectPath = pendingOpen; pendingOpen = null; allowed.clear(); addRecent(projectPath); });
   handle('export:encoders', async () => { await encodersReady; return { h264: hw.h264, hevc: hw.hevc }; });
   handle('project:dirty', (_e, v) => { dirty = v === true; });
   handle('app:close', e => { closing = true; try { fs.unlinkSync(autosaveFile()); } catch { /* rien à supprimer */ } winOf(e)?.close(); });

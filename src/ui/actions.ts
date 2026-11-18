@@ -1,5 +1,5 @@
 /** Actions de l'interface : relient les gestes de l'utilisateur aux opérations de core. */
-import { addFx, addMarker, addOverlay, addText, addTrack, appendClip, clipAt, clipsOf, findClip, hasTrack, isBase, isFree, kindOf, moveToTrack, moveTrack, projectDuration, removeClip, removeTrack, rippleRemove, setTrack, setTransition, splitAll, splitAt, startsOf, trackStarts } from '../core/ops';
+import { addFx, addMarker, addOverlay, addText, addTrack, appendClip, clipAt, clipsOf, findClip, hasTrack, isBase, isFree, kindOf, moveToTrack, moveTrack, projectDuration, removeClip, removeClips, removeTrack, rippleRemove, setTrack, setTransition, splitAll, splitAt, startsOf, trackStarts } from '../core/ops';
 import { parseProject } from '../core/project';
 import { emptyProject, MAX_EXTRA_TRACKS, type Project, type TextStyle, type TrackId, type TrackKind, type TrackState, type Transform } from '../core/types';
 import { ez } from '../desktop/api';
@@ -116,6 +116,14 @@ export function splitClipAt(id: string, t: number) {
 export function deleteSelection(ripple = false) {
   const st = S(), sel = st.sel;
   if (!sel) return;
+  if (sel.kind === 'clip' && st.picked.length > 1) {
+    const n = st.picked.length, before = st.project;
+    st.apply(p => removeClips(p, st.picked, ripple));
+    if (S().project === before) return; // refusé (piste verrouillée) : le message de refus reste affiché
+    st.select(null);
+    st.notify(`${n} clips supprimés.`, true);
+    return;
+  }
   if (sel.kind === 'transition') st.apply(p => setTransition(p, sel.id, null));
   else {
     const f = findClip(st.project, sel.id);
@@ -123,6 +131,34 @@ export function deleteSelection(ripple = false) {
     st.apply(p => (ripple && isFree(f.track) ? rippleRemove(p, sel.id) : removeClip(p, sel.id)));
   }
   st.select(null);
+}
+
+export const GROUP_HINT = (n: number) => `${n} clips sélectionnés. Suppr les retire ; un glissement déplace ensemble les titres, incrustations et sons (la piste Vidéo garde son ordre).`;
+/** Clips qu'on peut sélectionner : ceux des pistes non verrouillées, ou d'une seule piste. */
+function selectable(track?: TrackId): string[] {
+  const p = S().project;
+  return p.order.filter(tr => (!track || tr === track) && !p.tracks[tr]?.locked).flatMap(tr => clipsOf(p, tr).map(c => c.id));
+}
+/** Sélectionne tous les clips du montage, ou d'une piste. */
+export function selectAll(track?: TrackId) {
+  const ids = selectable(track);
+  if (track && S().project.tracks[track]?.locked) { isLocked(track); return; }
+  S().pick(ids, S().sel?.kind === 'clip' && ids.includes(S().sel!.id) ? S().sel!.id : undefined);
+  if (ids.length > 1) S().notify(GROUP_HINT(ids.length));
+}
+/** Clic sur un clip avec Ctrl (ajoute ou retire ce clip) ou Maj (ajoute tous les clips de la piste entre le clip principal et lui). */
+export function clickSelect(id: string, mods: { ctrl: boolean; shift: boolean }) {
+  const st = S(), cur = st.picked;
+  if (mods.ctrl) { st.pick(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id], cur.includes(id) ? undefined : id); return; }
+  if (mods.shift && st.sel?.kind === 'clip') {
+    const a = findClip(st.project, st.sel.id), b = findClip(st.project, id);
+    if (a && b && a.track === b.track) {
+      const lo = Math.min(a.index, b.index), hi = Math.max(a.index, b.index);
+      st.pick([...cur, ...clipsOf(st.project, a.track).slice(lo, hi + 1).map(c => c.id)], st.sel.id); // le clip de départ reste l'ancre
+    } else st.pick([...cur, id], id);
+    return;
+  }
+  st.select({ kind: 'clip', id });
 }
 
 /* ---------- repères, navigation, pistes ---------- */
@@ -163,7 +199,10 @@ export function zoomTimeline(factor: number) { S().set({ pps: Math.max(4, Math.m
 export function toggleTrack(track: TrackId, key: keyof TrackState) {
   const st = S(), on = !st.project.tracks[track]?.[key];
   st.apply(p => setTrack(p, track, { [key]: on }));
-  if (key === 'locked' && on && st.sel && findClip(st.project, st.sel.id)?.track === track) st.select(null);
+  if (key !== 'locked' || !on) return;
+  const s = S();
+  if (s.picked.length > 1) s.pick(s.picked, s.sel?.kind === 'clip' ? s.sel.id : undefined); // les clips de la piste quittent le groupe
+  else if (s.sel && findClip(s.project, s.sel.id)?.track === track) s.select(null);
 }
 
 /** Rend à une piste sa hauteur par défaut. */
@@ -187,7 +226,7 @@ export function deleteTrack(track: TrackId) {
   if (p.tracks[track]?.locked) { st.notify(`La piste « ${trackLabel(track)} » est verrouillée : déverrouillez-la avant de la supprimer.`); return; }
   const n = clipsOf(p, track).length;
   st.apply(q => removeTrack(q, track));
-  st.select(S().sel); // un clip sélectionné sur cette piste n'existe plus
+  S().pick(S().picked, S().sel?.kind === 'clip' ? S().sel!.id : undefined); // les clips de cette piste quittent la sélection
   st.notify(`Piste « ${trackLabel(track)} » supprimée${n ? ` avec ${n > 1 ? `ses ${n} clips` : 'son clip'}` : ''}.`, true);
 }
 /** Monte (delta négatif) ou descend une piste parmi les pistes d'image ou de son. */
@@ -259,6 +298,14 @@ export async function openProject() {
   if (!await canReplaceProject()) return;
   const r = await ez.openProject();
   if (r) await loadProject(r.json, r.path);
+}
+
+/** Rouvre un projet de la liste des projets récents. */
+export async function openRecentProject(path: string): Promise<boolean> {
+  if (!ez || !await canReplaceProject()) return false;
+  const r = await ez.openRecent(path);
+  if (!r) { S().notify('Ce projet n\'est plus là : il a été déplacé ou supprimé.'); return false; }
+  return loadProject(r.json, r.path);
 }
 
 export async function newProject() {

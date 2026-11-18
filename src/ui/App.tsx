@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { addFx, addOverlay, addText, appendClip, patchClip, setTransition } from '../core/ops';
 import { defaultText } from '../core/types';
 import { ez } from '../desktop/api';
 import { catalog, defaultsOf, loadCatalog, transitionDefaults } from '../effects/catalog';
 import { player } from '../engine/player';
 import { exportProject } from '../export/exporter';
-import { addMarkerAtPlayhead, deleteSelection, jumpClipEdge, jumpCut, jumpMarker, loadProject, newProject, openProject, saveProject, serialise, snapshot, splitAtPlayhead, zoomTimeline } from './actions';
+import { addMarkerAtPlayhead, deleteSelection, selectAll, jumpClipEdge, jumpCut, jumpMarker, loadProject, newProject, openProject, saveProject, serialise, snapshot, splitAtPlayhead, zoomTimeline } from './actions';
 import { MarkerDialog } from './MarkerDialog';
 import { ExportDialog } from './ExportDialog';
+import { Welcome } from './Welcome';
 import { Updates } from './Updates';
 import { ClaudeLink } from './ClaudeLink';
 import { ContextMenu } from './ContextMenu';
@@ -57,6 +58,9 @@ export function App() {
   const exportOpen = useStore(s => s.exportOpen);
   const L = useStore(s => s.layout);
   const [recovered, setRecovered] = useState<{ savedAt: number; json: string } | null>(null);
+  // Accueil au lancement (application de bureau seulement), après la question d'un projet à restaurer s'il y en a un.
+  const [welcome, setWelcome] = useState(!!ez);
+  const closeWelcome = useCallback(() => setWelcome(false), []);
   const [linkOpen, setLinkOpen] = useState(false);
   const drag = useRef(0);
 
@@ -84,13 +88,26 @@ export function App() {
       player.targetClipId = s.sel?.kind === 'clip' ? s.sel.id : null;
       if (s.dirty !== prev.dirty) { void ez?.setDirty(s.dirty); if (!s.dirty) void ez?.autosaveClear(); }
     });
-    // Sauvegarde automatique : toutes les 20 secondes, seulement si le projet a changé depuis la dernière.
-    let lastSaved: unknown = null;
+    // Sauvegarde automatique, toutes les 20 secondes si le projet a changé depuis la dernière :
+    // - un projet qui a déjà son fichier y est réenregistré (réglable dans le panneau Projet) ;
+    // - sinon, une copie de secours est gardée, proposée à la restauration après une fermeture inattendue.
+    // Jamais au milieu d'un geste (bouton de la souris enfoncé) ni pendant un export.
+    let lastSaved: unknown = null, held = false, writing = false;
+    const down = () => { held = true; }, up = () => { held = false; };
+    addEventListener('pointerdown', down, true); addEventListener('pointerup', up, true); addEventListener('pointercancel', up, true);
     const autosave = window.setInterval(() => {
       const s = st();
-      if (!ez || !s.dirty || s.project === lastSaved || s.exportOpen) return;
-      lastSaved = s.project;
-      void ez.autosaveWrite(serialise(s.project));
+      if (!ez || !s.dirty || s.project === lastSaved || s.exportOpen || held || writing) return;
+      const project = s.project, json = serialise(project);
+      lastSaved = project;
+      if (s.filePath && s.autoSaveFile) {
+        writing = true;
+        void ez.autosaveProject(json).then(path => {
+          // Le projet a pu changer pendant l'écriture : il reste alors « non enregistré ».
+          if (path && st().project === project) st().saved(path);
+          else if (!path) void ez!.autosaveWrite(json);
+        }, e => { log.error('projet', 'enregistrement automatique impossible', String(e)); void ez!.autosaveWrite(json); }).finally(() => { writing = false; });
+      } else void ez.autosaveWrite(json);
     }, 20000);
     ez?.onSaveAndClose(async () => { if (await saveProject()) await ez!.closeWindow(); });
 
@@ -121,6 +138,7 @@ export function App() {
         if (e.key === 'ArrowLeft' && s?.kind === 'clip') { e.preventDefault(); rotateClip(s.id, 90); return; }
       }
       if (mod && !typing()) {
+        if (k === 'a') { e.preventDefault(); selectAll(); return; }
         if (k === 'b') { e.preventDefault(); splitAtPlayhead(); return; }
         if (k === 'c') { e.preventDefault(); copyClip(); return; }
         if (k === 'x') { e.preventDefault(); copyClip(true); return; }
@@ -140,6 +158,7 @@ export function App() {
       else if (e.key.startsWith('Arrow') && onRange) return; // les flèches règlent le curseur ciblé
       else if (k === 's') splitAtPlayhead();
       else if (k === 'c') { st().set({ tool: 'razor' }); st().notify('Outil lame : cliquez sur un clip pour le couper. Échap ou V pour revenir à la sélection.'); }
+      else if (e.key === 'Escape' && st().tool === 'select') st().select(null); // Échap : outil lame → sélection, puis tout désélectionner
       else if (k === 'v' || e.key === 'Escape') st().set({ tool: 'select' });
       else if (k === 'n') { const on = !st().snap; st().set({ snap: on }); st().notify(on ? 'Aimantation activée.' : 'Aimantation désactivée.'); }
       else if (k === 'm') addMarkerAtPlayhead();
@@ -161,7 +180,7 @@ export function App() {
     const onDrop = (e: DragEvent) => { dropping(false); if (e.dataTransfer?.files.length) { e.preventDefault(); void importFiles([...e.dataTransfer.files]).then(m => { if (m.length) st().setTab('media'); }); } };
     addEventListener('keydown', onKey); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
     addEventListener('dragover', onDragOver); addEventListener('drop', onDrop);
-    return () => { unsub(); clearInterval(autosave); removeEventListener('keydown', onKey); removeEventListener('keyup', onKeyUp); removeEventListener('blur', onBlur); removeEventListener('dragover', onDragOver); removeEventListener('drop', onDrop); };
+    return () => { unsub(); clearInterval(autosave); removeEventListener('pointerdown', down, true); removeEventListener('pointerup', up, true); removeEventListener('pointercancel', up, true); removeEventListener('keydown', onKey); removeEventListener('keyup', onKeyUp); removeEventListener('blur', onBlur); removeEventListener('dragover', onDragOver); removeEventListener('drop', onDrop); };
   }, []);
 
   useEffect(() => { document.documentElement.classList.toggle('ez-light', light); }, [light]);
@@ -229,6 +248,7 @@ export function App() {
       <Updates />
       {linkOpen && <ClaudeLink onClose={() => setLinkOpen(false)} />}
       {exportOpen && <ExportDialog />}
+      {welcome && !recovered && !linkOpen && <Welcome onClose={closeWelcome} />}
       {recovered && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="Projet retrouvé">
           <div className="dialog">

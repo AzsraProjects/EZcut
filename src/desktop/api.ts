@@ -5,6 +5,7 @@ export interface ImportedFile {
   kind: 'video' | 'audio' | 'image';
   duration: number; width: number; height: number; hasAudio: boolean;
 }
+export interface RecentProject { path: string; name: string; folder: string; modified: number; }
 export interface AudioSegment { path: string | null; in: number; dur: number; volume: number; fadeIn?: number; fadeOut?: number; }
 export interface ExportRequest {
   width: number; height: number; fps: number; frames: number; name: string;
@@ -40,13 +41,22 @@ export interface EzApi {
   importPaths(paths: string[]): Promise<ImportedFile[]>;
   /** Réouverture d'un projet : le processus principal décide, avec l'utilisateur, quels fichiers redeviennent lisibles. */
   relinkMedia(paths: string[]): Promise<ImportedFile[]>;
+  /** Bande de n images (JPEG, w×h chacune) d'une vidéo déjà autorisée, faite par FFmpeg et gardée en cache ; null si impossible. */
+  mediaSprite(file: string, n: number, dur: number, w: number, h: number): Promise<Uint8Array | null>;
   /** Montre dans l'explorateur un média déjà importé. */
   revealMedia(path: string): Promise<void>;
   newProject(): Promise<void>;
   confirmDiscard(): Promise<'save' | 'discard' | 'cancel'>;
   pathForFile(file: File): string;
   saveProject(json: string, saveAs: boolean): Promise<string | null>;
+  /** Réécrit le projet dans son fichier, s'il en a déjà un ; null sinon. */
+  autosaveProject(json: string): Promise<string | null>;
   openProject(): Promise<{ path: string; json: string } | null>;
+  /** Projets ouverts ou enregistrés récemment et toujours présents, du plus récent au plus ancien. */
+  recentProjects(): Promise<RecentProject[]>;
+  /** Rouvre un projet de cette liste (et seulement d'elle). */
+  openRecent(path: string): Promise<{ path: string; json: string } | null>;
+  forgetRecent(path: string): Promise<void>;
   /** À appeler une fois le fichier ouvert reconnu comme un projet valide : il devient le projet courant. */
   projectOpened(): Promise<void>;
   /** Encodeur matériel disponible pour chaque codec (nvenc, qsv, amf), ou null. */

@@ -3,19 +3,22 @@ import { addMarker, addSound, clipAt, clipCount, clipsOf, closeGap, detachAudio,
 import { MAX_EXTRA_TRACKS, type Clip, type FxInstance, type Params, type TrackId, type TrackKind } from '../core/types';
 import { ez } from '../desktop/api';
 import { player } from '../engine/player';
-import { addToTimeline, addTrackOfKind, deleteSelection, deleteTrack, isLocked, resetLaneHeight, selectClip, sendClipToTrack, shiftTrack, splitAtPlayhead, trackLabel } from './actions';
+import { addToTimeline, addTrackOfKind, deleteSelection, selectAll, deleteTrack, isLocked, resetLaneHeight, selectClip, sendClipToTrack, shiftTrack, splitAtPlayhead, trackLabel } from './actions';
 import { replaceMediaFile } from './media';
 import type { MenuEntry } from './ContextMenu';
 import { useStore } from './store';
 
 const S = () => useStore.getState();
 const selectedClip = () => { const st = S(); return st.sel?.kind === 'clip' ? findClip(st.project, st.sel.id) : null; };
+/** Plusieurs clips sélectionnés : une action qui ne vaut que pour un clip le dit au lieu d'agir sur un seul en silence. */
+const single = (what: string) => { if (S().picked.length < 2) return true; S().notify(`${what} agit sur un seul clip : cliquez sur un clip pour ne sélectionner que lui.`); return false; };
 
 /* ---------- presse-papiers (interne à l'application) ---------- */
 let clipboard: { clip: Clip; track: TrackId } | null = null;
 let fxClipboard: { fx: FxInstance[]; color: Params } | null = null;
 
 export function copyClip(cut = false) {
+  if (!single(cut ? 'Couper' : 'Copier')) return;
   const f = selectedClip();
   if (!f) return;
   clipboard = { clip: structuredClone(f.clip), track: f.track };
@@ -37,6 +40,7 @@ export function pasteClip(at?: number, onto?: TrackId) {
   st.apply(() => r.project); selectClip(r.clipId);
 }
 export function duplicateSelection() {
+  if (!single('Dupliquer')) return;
   const f = selectedClip(); if (!f || isLocked(f.track)) return;
   const r = duplicateClip(S().project, f.clip.id);
   if (r) { S().apply(() => r.project); selectClip(r.clipId); }
@@ -45,6 +49,7 @@ export function duplicateSelection() {
 /* ---------- actions sur le clip sélectionné ---------- */
 /** Rogne un bord jusqu'à la tête de lecture. */
 export function trimToPlayhead(edge: 'start' | 'end') {
+  if (!single('Rogner à la tête de lecture')) return;
   const f = selectedClip() ?? (() => { const h = clipAt(S().project.video, player.t); return h ? findClip(S().project, h.clip.id) : null; })();
   if (!f || isLocked(f.track)) return;
   const t = player.t, end = f.start + f.clip.dur;
@@ -54,12 +59,27 @@ export function trimToPlayhead(edge: 'start' | 'end') {
 }
 const volumes = new Map<string, number>();
 export function toggleMute(id: string) {
+  // Clip d'un groupe : tout le groupe se tait, ou retrouve son son si le clip visé était déjà muet.
+  const group = S().picked.length > 1 && S().picked.includes(id) ? S().picked : null;
+  if (group) {
+    const on = (findClip(S().project, id)?.clip.volume ?? 0) > 0;
+    S().apply(p => group.reduce((q, g) => patchClip(q, g, c => { if (on) { if (c.volume > 0) volumes.set(g, c.volume); c.volume = 0; } else c.volume = volumes.get(g) ?? 1; }), p));
+    return;
+  }
   const f = findClip(S().project, id); if (!f) return;
   if (f.clip.volume > 0) { volumes.set(id, f.clip.volume); S().apply(p => patchClip(p, id, c => { c.volume = 0; })); }
   else S().apply(p => patchClip(p, id, c => { c.volume = volumes.get(id) ?? 1; }));
 }
 export function rotateClip(id: string, deg: number) {
-  S().apply(p => patchClip(p, id, c => { c.transform.rot = ((c.transform.rot + deg + 180) % 360 + 360) % 360 - 180; }));
+  const turn = (r: number) => ((r + deg + 180) % 360 + 360) % 360 - 180;
+  // Clip animé : tout le mouvement pivote, chaque point garde son écart avec les autres.
+  S().apply(p => patchClip(p, id, c => { c.transform.rot = turn(c.transform.rot); if (c.keys) for (const k of c.keys) k.rot += turn(k.rot) - k.rot; }));
+}
+/** Cadrage d'origine ; un mouvement éventuel est retiré (annulable). */
+export function resetFraming(id: string) {
+  const had = !!findClip(S().project, id)?.clip.keys?.length;
+  S().apply(p => patchClip(p, id, x => { x.transform = { scale: 1, x: 0, y: 0, rot: 0 }; delete x.keys; }));
+  if (had) S().notify('Cadrage réinitialisé et mouvement retiré.', true);
 }
 /** Détache le son d'un clip vidéo vers la piste Son, où il se règle, se coupe et se déplace à part. */
 export function detachSound(id?: string) {
@@ -76,7 +96,16 @@ export function copyEffects() {
   fxClipboard = { fx: structuredClone(f.clip.fx), color: structuredClone(f.clip.color) }; S().notify('Effets copiés.');
 }
 export function pasteEffects() {
-  const f = selectedClip(), b = fxClipboard;
+  const b = fxClipboard, group = S().picked;
+  if (group.length > 1) {
+    if (!b) { S().notify('Rien à coller : copiez d\'abord les effets d\'un clip.'); return; }
+    const targets = group.filter(id => { const g = findClip(S().project, id); return g && !g.clip.text && !isSound(g.track); });
+    if (!targets.length) { S().notify('Les effets se collent sur des vidéos ou des images.'); return; }
+    S().apply(p => targets.reduce((q, id) => patchClip(q, id, x => { x.fx.push(...b.fx.map(e => ({ ...structuredClone(e), uid: 'fx-' + Math.random().toString(36).slice(2, 10) }))); Object.assign(x.color, b.color); }), p));
+    S().notify(`Effets collés sur ${targets.length} clip${targets.length > 1 ? 's' : ''}.`, true);
+    return;
+  }
+  const f = selectedClip();
   if (!f || !b || f.clip.text || isSound(f.track)) { if (!b) S().notify('Rien à coller : copiez d\'abord les effets d\'un clip.'); return; }
   S().apply(p => patchClip(p, f.clip.id, x => { x.fx.push(...b.fx.map(e => ({ ...structuredClone(e), uid: 'fx-' + Math.random().toString(36).slice(2, 10) }))); Object.assign(x.color, b.color); }));
 }
@@ -120,7 +149,7 @@ function clipMenu(id: string): MenuEntry[] {
     visual && !c.text ? { label: c.transform.flipH ? 'Annuler le retournement horizontal' : 'Retourner horizontalement', action: () => flip('flipH') } : null,
     visual && !c.text ? { label: c.transform.flipV ? 'Annuler le retournement vertical' : 'Retourner verticalement', action: () => flip('flipV') } : null,
     !isSound(track) ? { label: 'Fondu de l\'image au début et à la fin', action: () => S().apply(p => patchClip(p, id, x => { const d = Math.min(0.5, x.dur / 4); x.vfadeIn = d; x.vfadeOut = d; })) } : null,
-    !isSound(track) ? { label: 'Réinitialiser le cadrage', disabled: c.transform.scale === 1 && !c.transform.x && !c.transform.y && !c.transform.rot && !c.transform.flipH && !c.transform.flipV, action: () => S().apply(p => patchClip(p, id, x => { x.transform = { scale: 1, x: 0, y: 0, rot: 0 }; })) } : null,
+    !isSound(track) ? { label: 'Réinitialiser le cadrage', disabled: !c.keys?.length && c.transform.scale === 1 && !c.transform.x && !c.transform.y && !c.transform.rot && !c.transform.flipH && !c.transform.flipV, action: () => resetFraming(id) } : null,
     null,
     visual && !c.text ? { label: 'Copier les effets et la couleur', shortcut: 'Ctrl+Alt+C', disabled: !c.fx.length && !Object.keys(c.color).length, action: copyEffects } : null,
     visual && !c.text ? { label: 'Coller les effets et la couleur', shortcut: 'Ctrl+Alt+V', disabled: !fxClipboard, action: pasteEffects } : null,
@@ -134,12 +163,29 @@ function clipMenu(id: string): MenuEntry[] {
   ];
 }
 /** Menu d'un clip de la timeline. Le clip est d'abord sélectionné : les entrées agissent sur lui. */
-export function menuForClip(id: string): MenuEntry[] { S().select({ kind: 'clip', id }); return clipMenu(id); }
+export function menuForClip(id: string): MenuEntry[] {
+  const picked = S().picked;
+  // Clic droit sur un clip d'un groupe sélectionné : le menu porte sur tout le groupe.
+  if (picked.length > 1 && picked.includes(id)) {
+    S().pick(picked, id);
+    return [
+      { label: `Supprimer les ${picked.length} clips`, shortcut: 'Suppr', danger: true, action: () => deleteSelection() },
+      { label: 'Supprimer et refermer les vides', shortcut: 'Maj+Suppr', danger: true, action: () => deleteSelection(true) },
+      null,
+      { label: 'Ne garder que ce clip sélectionné', action: () => S().select({ kind: 'clip', id }) },
+      { label: 'Tout désélectionner', action: () => S().select(null) },
+    ];
+  }
+  S().select({ kind: 'clip', id }); return clipMenu(id);
+}
 
 /** Menu d'une zone vide d'une piste, à l'instant time. */
 export function menuForLane(track: TrackId, time: number): MenuEntry[] {
   const gap = gapAt(S().project, track, time);
   return [
+    { label: 'Sélectionner tous les clips de la piste', disabled: !clipsOf(S().project, track).length, action: () => selectAll(track) },
+    { label: 'Tout sélectionner', shortcut: 'Ctrl+A', action: () => selectAll() },
+    null,
     gap ? { label: `Refermer ce vide (${(gap[1] - gap[0]).toFixed(1)} s)`, action: () => { if (!isLocked(track)) S().apply(p => closeGap(p, track, time)); } } : null,
     { label: 'Coller ici', shortcut: 'Ctrl+V', disabled: !clipboard || kindOf(clipboard.track) !== kindOf(track), action: () => { S().select(null); pasteClip(time, track); } },
     { label: 'Placer la tête de lecture ici', action: () => { player.pause(); player.seek(time); } },
@@ -160,6 +206,8 @@ export function menuForAddTrack(): MenuEntry[] {
 export function menuForTrack(track: TrackId): MenuEntry[] {
   const st = S(), p = st.project, free = isFree(track), kind = TRACK_KINDS.find(k => k[0] === kindOf(track));
   return [
+    { label: 'Sélectionner tous les clips de la piste', disabled: !clipsOf(p, track).length, action: () => selectAll(track) },
+    null,
     free ? { label: 'Monter', disabled: moveTrack(p, track, -1) === p, action: () => shiftTrack(track, -1) } : null,
     free ? { label: 'Descendre', disabled: moveTrack(p, track, 1) === p, action: () => shiftTrack(track, 1) } : null,
     null,

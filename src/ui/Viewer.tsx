@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { findClip, isSound, patchClip, projectDuration } from '../core/ops';
 import { player, type PreviewQuality } from '../engine/player';
+import { hasMotion, motionAt } from '../core/motion';
 import { jumpCut, snapshot } from './actions';
+import { keyNow, localOf, mimicEnd, mimicSample, mimicStart, motionTarget, setMimic } from './motion';
+import { MotionPath } from './MotionPath';
 import { Icon } from './Icon';
 import { useStore } from './store';
 import { subscribeTime, timecode } from './time';
@@ -32,26 +35,50 @@ export function Viewer() {
   const movable = useStore(s => { const f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return !!f && !isSound(f.track); });
 
   // Dans l'aperçu, le clip sélectionné se déplace à la souris et se redimensionne à la molette.
-  const target = () => { const s = useStore.getState(), f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return f && !isSound(f.track) ? f.clip : null; };
   const drag = (e: React.PointerEvent) => {
-    const clip = target(), el = e.currentTarget as HTMLElement;
-    if (!clip || e.button !== 0) return;
+    const tg = motionTarget(), el = e.currentTarget as HTMLElement;
+    if (!tg || e.button !== 0) return;
+    const { clip, start } = tg, animated = hasMotion(clip);
     const s = useStore.getState(), p = s.project, r = el.getBoundingClientRect(), ar = p.width / p.height;
     const dw = Math.min(r.width, r.height * ar), dh = dw / ar; // taille réelle de l'image affichée dans le canvas
-    const x0 = e.clientX, y0 = e.clientY, tx = clip.transform.x, ty = clip.transform.y, id = clip.id;
-    s.checkpoint(); el.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => useStore.getState().apply(q => patchClip(q, id, c => { c.transform.x = Math.max(-1.5, Math.min(1.5, tx + (ev.clientX - x0) / dw)); c.transform.y = Math.max(-1.5, Math.min(1.5, ty - (ev.clientY - y0) / dh)); }), false);
-    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+    const local = localOf(clip, start), now = motionAt(clip, local).transform;
+    const x0 = e.clientX, y0 = e.clientY, tx = now.x, ty = now.y, id = clip.id;
+    const at = (ev: PointerEvent | React.PointerEvent) => ({ x: Math.max(-1.5, Math.min(1.5, tx + (ev.clientX - x0) / dw)), y: Math.max(-1.5, Math.min(1.5, ty - (ev.clientY - y0) / dh)) });
+    el.setPointerCapture(e.pointerId);
+    let move: (ev: PointerEvent) => void, done = () => {};
+    if (s.motionRec) {
+      // Mimer : la lecture tourne au ralenti et l'image suit la main jusqu'au relâchement.
+      mimicStart(id);
+      move = ev => { const q = at(ev); mimicSample(id, q.x, q.y); };
+      move(e.nativeEvent);
+      done = () => mimicEnd(id);
+    } else if (animated) {
+      // Clip animé : le glissement pose (ou modifie) le point du mouvement à la tête de lecture.
+      if (player.t < start - 1e-6 || player.t > start + clip.dur + 1e-6) { s.notify('Placez la tête de lecture sur le clip pour régler son mouvement à cet instant.'); return; }
+      player.pause(); s.checkpoint();
+      move = ev => keyNow(id, at(ev), false);
+    } else {
+      s.checkpoint();
+      move = ev => useStore.getState().apply(q => patchClip(q, id, c => { const v = at(ev); c.transform.x = v.x; c.transform.y = v.y; }), false);
+    }
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); done(); };
     el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
   };
   const wheel = (e: React.WheelEvent) => {
-    const clip = target();
-    if (!clip) return;
-    const s = useStore.getState(), id = clip.id, now = performance.now();
+    const tg = motionTarget();
+    if (!tg) return;
+    const s = useStore.getState(), id = tg.clip.id, now = performance.now(), k = e.deltaY < 0 ? 1.05 : 1 / 1.05;
     if (now - lastWheel.current > 800) s.checkpoint(); // une série de crans rapprochés = un seul geste
     lastWheel.current = now;
-    s.apply(q => patchClip(q, id, c => { c.transform.scale = Math.max(0.05, Math.min(8, c.transform.scale * (e.deltaY < 0 ? 1.05 : 1 / 1.05))); }), false);
+    if (hasMotion(tg.clip)) { player.pause(); keyNow(id, { scale: Math.max(0.05, Math.min(8, motionAt(tg.clip, localOf(tg.clip, tg.start)).transform.scale * k)) }, false); return; }
+    s.apply(q => patchClip(q, id, c => { c.transform.scale = Math.max(0.05, Math.min(8, c.transform.scale * k)); }), false);
   };
+  const rec = useStore(s => s.motionRec);
+  useEffect(() => {
+    if (!rec) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMimic(false); };
+    addEventListener('keydown', esc, true); return () => removeEventListener('keydown', esc, true);
+  }, [rec]);
   useEffect(() => subscribeTime(t => { if (cur.current) cur.current.textContent = timecode(t, fps); }), [fps]);
 
   const fullscreen = () => { void canvas.current?.requestFullscreen?.().catch(() => {}); };
@@ -60,7 +87,9 @@ export function Viewer() {
   return (
     <section className="viewer">
       <div className="stage">
-        <canvas ref={canvas} width={960} height={540} className={movable ? 'movable' : undefined} onPointerDown={drag} onWheel={wheel} title={movable ? 'Glisser pour déplacer le clip sélectionné, molette pour le redimensionner' : undefined} />
+        <canvas ref={canvas} width={960} height={540} className={rec ? 'movable rec' : movable ? 'movable' : undefined} onPointerDown={drag} onWheel={wheel} title={rec ? "Mimer : appuyez et bougez, l'image suit la souris" : movable ? 'Glisser pour déplacer le clip sélectionné, molette pour le redimensionner. Avec un mouvement : pose un point à la tête de lecture.' : undefined} />
+        <MotionPath canvas={canvas} />
+        {rec && <div className="mimic-badge" role="status"><i />Mimer — ralenti × 0,5 · Échap pour quitter</div>}
         {empty && <div className="stage-empty">Importez un média puis ajoutez-le à la timeline pour commencer.</div>}
       </div>
       <div className="transport">

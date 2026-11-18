@@ -1,11 +1,15 @@
 import { findClip, isImage, isSound, patchClip, removeFx, setTransition, spanWhole, trimClip } from '../core/ops';
 import { trackLabel } from './actions';
-import { BLEND_MODES, TEXT_ANIMS, type BlendMode, type Clip, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TrackId } from '../core/types';
+import { hasMotion, motionAt } from '../core/motion';
+import { keyNow, usePlayhead } from './motion';
+import { player } from '../engine/player';
+import { MotionSection } from './MotionPanel';
+import { BLEND_MODES, posToVolume, TEXT_ANIMS, volumeToPos, type BlendMode, type Clip, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TrackId } from '../core/types';
 import { catalog, humanize, type CatEffect, type CatTransition } from '../effects/catalog';
 import type { IsfInput } from '../engine/gl';
 import { FONTS } from '../engine/text';
 import { Icon } from './Icon';
-import { applyTransitionEverywhere, rotateClip } from './menus';
+import { applyTransitionEverywhere, rotateClip, resetFraming } from './menus';
 import { useStore } from './store';
 import { timecode } from './time';
 
@@ -80,13 +84,20 @@ function TextSection({ clip, edit }: { clip: Clip; edit: (fn: (c: Clip) => void)
   </>;
 }
 
-function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; project: Project }) {
+function ClipPanel({ clip, track, project, start }: { clip: Clip; track: TrackId; project: Project; start: number }) {
   const media = project.media.find(m => m.id === clip.mediaId);
   const poster = useStore(s => s.thumbs[clip.mediaId]?.poster);
   const edit = (fn: (c: Clip) => void) => st().apply(p => patchClip(p, clip.id, fn), false);
   const isAudio = isSound(track), isText = !!clip.text, layered = isImage(track), col = catalog.color;
   const colorVals: Params = col ? { ...Object.fromEntries(col.inputs.map(i => [i.NAME, i.DEFAULT as ParamValue])), ...clip.color } : {};
-  const tf = clip.transform, hasSound = isAudio || (!!media?.hasAudio && media.kind !== 'image' && !clip.still);
+  // Clip animé : les réglages montrent l'état à la tête de lecture, et les changer pose le point du mouvement à cet instant.
+  const animated = hasMotion(clip), now = usePlayhead(animated), m = animated ? motionAt(clip, Math.max(0, Math.min(clip.dur, now - start))) : null;
+  const tf = m ? m.transform : clip.transform, opacity = m ? m.opacity : clip.opacity;
+  const tfEdit = (patch: { scale?: number; x?: number; y?: number; rot?: number; opacity?: number }) => {
+    if (animated) { player.pause(); keyNow(clip.id, patch, false); return; }
+    edit(c => { const { opacity: o, ...t } = patch; Object.assign(c.transform, t); if (o !== undefined) c.opacity = o; });
+  };
+  const hasSound = isAudio || (!!media?.hasAudio && media.kind !== 'image' && !clip.still);
   const kind = isText ? 'Titre' : isAudio ? 'Audio' : clip.still ? 'Arrêt sur image' : media?.kind === 'image' ? 'Image' : 'Vidéo';
   return <>
     <div className="ihead">
@@ -95,11 +106,11 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
     </div>
     {isText && <TextSection clip={clip} edit={edit} />}
     {!isAudio && <div className="sec">
-      <h3>{isText ? 'Position' : 'Transformation'}<button className="btn sm" onClick={() => st().apply(p => patchClip(p, clip.id, c => { c.transform = { scale: 1, x: 0, y: 0, rot: 0 }; }))}>Réinitialiser</button></h3>
-      <Slider label="Échelle" min={10} max={400} step={1} digits={0} unit=" %" value={Math.round(tf.scale * 100)} onChange={v => edit(c => { c.transform.scale = v / 100; })} />
-      <Slider label="Horizontal" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.x * 100} onChange={v => edit(c => { c.transform.x = v / 100; })} />
-      <Slider label="Vertical" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.y * 100} onChange={v => edit(c => { c.transform.y = v / 100; })} />
-      <Slider label="Rotation" min={-180} max={180} step={1} digits={0} unit="°" value={tf.rot} onChange={v => edit(c => { c.transform.rot = v; })} />
+      <h3>{isText ? 'Position' : 'Transformation'}<button className="btn sm" title={animated ? 'Cadrage d\'origine ; retire aussi le mouvement' : 'Cadrage d\'origine'} onClick={() => resetFraming(clip.id)}>Réinitialiser</button></h3>
+      <Slider label="Échelle" min={10} max={400} step={1} digits={0} unit=" %" value={Math.round(tf.scale * 100)} onChange={v => tfEdit({ scale: v / 100 })} />
+      <Slider label="Horizontal" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.x * 100} onChange={v => tfEdit({ x: v / 100 })} />
+      <Slider label="Vertical" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.y * 100} onChange={v => tfEdit({ y: v / 100 })} />
+      <Slider label="Rotation" min={-180} max={180} step={1} digits={0} unit="°" value={tf.rot} onChange={v => tfEdit({ rot: v })} />
       {!isText && <div className="row"><span>Quart de tour</span><div className="pairbtn">
         <button className="btn sm" title="Pivoter de 90° vers la gauche (Ctrl+Alt+←)" onClick={() => rotateClip(clip.id, 90)}>↺ Gauche</button>
         <button className="btn sm" title="Pivoter de 90° vers la droite (Ctrl+Alt+→)" onClick={() => rotateClip(clip.id, -90)}>↻ Droite</button>
@@ -109,6 +120,7 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
         <button aria-pressed={!!tf.flipV} title="Miroir haut-bas" onClick={() => st().apply(p => patchClip(p, clip.id, c => { if (c.transform.flipV) delete c.transform.flipV; else c.transform.flipV = true; }))}>↕ Vertical</button>
       </div></div>}
     </div>}
+    {!isAudio && <MotionSection clip={clip} start={start} />}
     {!isAudio && <div className="sec">
       <h3>Fondu de l'image</h3>
       <Slider label="Ouverture" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.vfadeIn} onChange={v => edit(c => { c.vfadeIn = Math.min(v, c.dur); c.vfadeOut = Math.min(c.vfadeOut, c.dur - c.vfadeIn); })} />
@@ -116,7 +128,7 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
     </div>}
     {layered && <div className="sec">
       <h3>Fusion</h3>
-      <Slider label="Opacité" min={0} max={100} step={1} digits={0} unit=" %" value={Math.round(clip.opacity * 100)} onChange={v => edit(c => { c.opacity = v / 100; })} />
+      <Slider label="Opacité" min={0} max={100} step={1} digits={0} unit=" %" value={Math.round(opacity * 100)} onChange={v => tfEdit({ opacity: v / 100 })} />
       <Select label="Mode" value={clip.blend} options={BLEND_MODES.map(b => [b, BLEND_LABELS[b]])} onChange={blend => edit(c => { c.blend = blend; })} />
     </div>}
     {!isAudio && !isText && col && <div className="sec">
@@ -128,7 +140,7 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
       <Slider label="Durée" min={0.5} max={Math.max(30, Math.ceil(clip.dur))} step={0.1} digits={1} unit=" s" value={clip.dur} onChange={v => st().apply(p => trimClip(p, clip.id, 'end', v - (findClip(p, clip.id)?.clip.dur ?? v)), false)} />
     </div>}
     {hasSound && <div className="sec"><h3>Son</h3>
-      <Slider label="Volume" min={0} max={100} step={1} digits={0} unit=" %" value={Math.round(clip.volume * 100)} onChange={v => edit(c => { c.volume = v / 100; })} />
+      <label className="row"><span>Volume</span><input type="range" min={0} max={1000} step={1} value={Math.round(volumeToPos(clip.volume) * 1000)} aria-valuetext={`${Math.round(clip.volume * 100)} %`} title="Milieu : 100 %, le son d'origine ; tout à droite : 400 %" onPointerDown={() => st().checkpoint()} onKeyDown={() => st().checkpoint()} onChange={e => edit(c => { c.volume = Math.round(posToVolume(+e.target.value / 1000) * 100) / 100; })} onDoubleClick={() => edit(c => { c.volume = 1; })} /><output>{Math.round(clip.volume * 100)} %</output></label>
       <Slider label="Fondu d'entrée" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.fadeIn} onChange={v => edit(c => { c.fadeIn = Math.min(v, c.dur); c.fadeOut = Math.min(c.fadeOut, c.dur - c.fadeIn); })} />
       <Slider label="Fondu de sortie" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.fadeOut} onChange={v => edit(c => { c.fadeOut = Math.min(v, c.dur); c.fadeIn = Math.min(c.fadeIn, c.dur - c.fadeOut); })} />
     </div>}
@@ -191,18 +203,33 @@ function ProjectPanel({ project }: { project: Project }) {
         {FORMATS.map(([l, w, h]) => <option key={l} value={`${w}x${h}`}>{l}</option>)}</select></label>
       <label className="row"><span>Cadence</span><select className="sel" value={project.fps} onChange={e => st().apply(p => ({ ...p, fps: +e.target.value }))}>{[24, 25, 30, 50, 60].map(f => <option key={f} value={f}>{f} images/s</option>)}</select></label>
     </div>
+    <AutoSave />
     <div className="sec"><div className="hint">Sélectionnez un clip ou un titre dans la timeline pour le régler.</div></div>
   </>;
+}
+function AutoSave() {
+  const on = useStore(s => s.autoSaveFile), path = useStore(s => s.filePath);
+  return (
+    <div className="sec">
+      <h3>Enregistrement</h3>
+      <label className="row" title="Toutes les 20 secondes, dès qu'il y a eu une modification, le projet est réenregistré dans son fichier."><span>Automatique</span><input type="checkbox" checked={on} onChange={e => st().setAutoSaveFile(e.target.checked)} /><span /></label>
+      <div className="hint">{!on ? 'Désactivé : seule une copie de secours est gardée, proposée après une fermeture inattendue.'
+        : path ? "Le projet s'enregistre tout seul dans son fichier toutes les 20 secondes après une modification."
+        : "Enregistrez le projet une première fois (Ctrl+S) : il s'enregistrera ensuite tout seul toutes les 20 secondes."}</div>
+    </div>
+  );
 }
 
 export function Inspector() {
   const project = useStore(s => s.project);
   const sel = useStore(s => s.sel);
   const found = sel ? findClip(project, sel.id) : null;
+  const many = useStore(s => s.picked.length);
   return (
     <section className="insp">
+      {many > 1 && <p className="multi">{many} clips sélectionnés — réglages ci-dessous : celui sur lequel vous avez cliqué en dernier. Suppr retire tout le groupe.</p>}
       {found && sel?.kind === 'transition' && found.clip.transition ? <TransitionPanel clip={found.clip} />
-        : found && sel?.kind === 'clip' ? <ClipPanel clip={found.clip} track={found.track} project={project} />
+        : found && sel?.kind === 'clip' ? <ClipPanel clip={found.clip} track={found.track} project={project} start={found.start} />
         : <ProjectPanel project={project} />}
     </section>
   );

@@ -1,5 +1,6 @@
 /** Opérations de montage. Fonctions pures : elles reçoivent un projet et en renvoient un nouveau. */
 import { BASE_TRACKS, IMAGE_DURATION, MARKER_COLORS, MAX_EXTRA_TRACKS, MIN_CLIP, TEXT_DURATION, type Marker, type TrackKind, type TrackState, type Clip, type FxInstance, type Media, type ParamValue, type Project, type TextStyle, type TrackId, type TransitionInstance } from './types';
+import { hasMotion, motionAt, shiftKeys } from './motion';
 
 let counter = 0;
 export const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(counter++).toString(36)}`;
@@ -221,6 +222,34 @@ export function moveFree(p: Project, id: string, start: number): Project {
   return n;
 }
 
+/** Déplace ensemble, du même écart dt, les clips ids posés sur des pistes libres (les clips de la piste principale ne bougent pas).
+ *  L'écart est borné pour qu'aucun ne passe avant 0 ; si un clip déplacé chevauchait un clip resté en place, rien ne bouge. */
+export function moveGroup(p: Project, ids: string[], dt: number): Project {
+  const set = new Set(ids), tracks = p.order.filter(tr => isFree(tr) && clipsOf(p, tr).some(c => set.has(c.id)));
+  if (!tracks.length) return p;
+  const min = Math.min(...tracks.flatMap(tr => clipsOf(p, tr).filter(c => set.has(c.id)).map(c => c.start)));
+  const d = Math.max(-min, dt);
+  if (Math.abs(d) < 1e-9) return p;
+  const n = clone(p);
+  for (const tr of tracks) {
+    const list = clipsOf(n, tr);
+    for (const c of list) if (set.has(c.id)) c.start += d;
+    const still = list.filter(c => !set.has(c.id));
+    if (list.some(c => set.has(c.id) && still.some(o => c.start < o.start + o.dur - 1e-9 && c.start + c.dur > o.start + 1e-9))) return p;
+    sortFree(list);
+  }
+  return n;
+}
+
+/** Retire plusieurs clips d'un coup. Avec ripple, sur chaque piste libre, les clips suivants avancent pour refermer les vides. */
+export function removeClips(p: Project, ids: string[], ripple = false): Project {
+  // Du dernier au premier : retirer un clip n'avance que ceux qui le suivent.
+  const found = ids.map(id => findClip(p, id)).filter(f => f !== null).sort((a, b) => b.start - a.start);
+  let n = p;
+  for (const f of found) n = ripple && isFree(f.track) ? rippleRemove(n, f.clip.id) : removeClip(n, f.clip.id);
+  return n;
+}
+
 /** Scinde le clip de la piste sous l'instant t. Sans effet à moins de MIN_CLIP d'un bord. */
 export function splitAt(p: Project, track: TrackId, t: number): Project {
   const free = isFree(track);
@@ -238,6 +267,9 @@ export function splitAt(p: Project, track: TrackId, t: number): Project {
   if (local < MIN_CLIP || src.dur - local < MIN_CLIP) return p;
   const n = clone(p), c = clipsOf(n, track)[index];
   const right: Clip = { ...clone(c), id: newId('clip'), start: c.start + local, in: c.in + local, dur: c.dur - local, fadeIn: 0, vfadeIn: 0, fx: c.fx.map(f => ({ ...clone(f), uid: newId('fx') })) };
+  // Mouvement : les deux moitiés gardent tous les points (ceux hors du clip ne s'affichent pas), la partie droite décalée :
+  // le mouvement continue sans saut ni ralentissement à la coupe, et se retrouve entier si on recolle.
+  shiftKeys(right, local);
   c.dur = local; c.fadeOut = 0; c.vfadeOut = 0; clampFades(c); clampFades(right);
   c.transition = null; // la transition suit la partie droite, qui garde la coupe d'origine
   clipsOf(n, track).splice(index + 1, 0, right);
@@ -289,6 +321,7 @@ export function trimClip(p: Project, id: string, edge: 'start' | 'end', delta: n
     if (free) { const prev = list[f.index - 1]; lo = Math.max(lo, (prev ? prev.start + prev.dur : 0) - c.start); }
     else if (!timed) lo = -Infinity;
     const d = Math.max(lo, Math.min(c.dur - MIN_CLIP, delta));
+    shiftKeys(c, d); // le mouvement reste calé sur le contenu
     if (timed) c.in += d;
     if (free) c.start += d;
     c.dur -= d;
@@ -400,6 +433,8 @@ export function freezeAt(p: Project, t: number, dur = 5): { project: Project; cl
   const cut = splitAt(p, 'video', t), wasSplit = cut !== p;
   const n = clone(cut), src = n.video[hit.index];
   const still: Clip = { ...copyOf(hit.clip), in: hit.clip.still ? hit.clip.in : hit.clip.in + hit.local, dur: Math.max(MIN_CLIP, dur), still: true, fadeIn: 0, fadeOut: 0, vfadeIn: 0, vfadeOut: 0 };
+  // Un arrêt sur image ne bouge pas : il garde le cadrage de l'instant figé.
+  if (hasMotion(hit.clip)) { const m = motionAt(hit.clip, hit.local); delete still.keys; still.transform = { ...m.transform }; still.opacity = m.opacity; }
   const index = wasSplit || hit.local >= hit.clip.dur / 2 ? hit.index + 1 : hit.index;
   if (wasSplit) { still.transition = null; src.transition = null; }
   n.video.splice(index, 0, still);
@@ -463,6 +498,9 @@ export function removeMarker(p: Project, id: string | null): Project {
 }
 
 /** Change l'état d'une piste (muette, masquée, verrouillée). */
+/** Gain de toute une piste (réglage de volume de son en-tête) ; 1 par défaut. */
+export const trackGain = (p: Project, track: TrackId) => p.tracks[track]?.volume ?? 1;
+
 export function setTrack(p: Project, track: TrackId, patch: TrackState): Project {
   const n = clone(p);
   n.tracks[track] = { ...n.tracks[track], ...patch };

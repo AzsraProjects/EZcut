@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Media } from '../core/types';
+import { clipsOf } from '../core/ops';
 import { FEATURED, type CatItem } from '../effects/catalog';
 import { player, TH, TW } from '../engine/player';
 import { animState, drawText } from '../engine/text';
@@ -80,14 +81,18 @@ function TitleTile({ preset }: { preset: TitlePreset }) {
 function MediaTile({ m }: { m: Media }) {
   const poster = useStore(s => s.thumbs[m.id]?.poster);
   const fps = useStore(s => s.project.fps);
+  // Nombre de clips du montage tirés de ce média, toutes pistes confondues.
+  const uses = useStore(s => s.project.order.reduce((n, tr) => n + clipsOf(s.project, tr).filter(c => c.mediaId === m.id).length, 0));
+  const used = uses ? `\nDans le montage : ${uses} clip${uses > 1 ? 's' : ''}.` : '\nPas encore dans le montage.';
   return (
-    <button className={m.url ? 'tile' : 'tile missing'} title={m.url ? 'Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture.' : 'Fichier introuvable : cliquez pour le retrouver'} draggable
+    <button className={`tile${m.url ? '' : ' missing'}${uses ? ' used' : ''}`} title={(m.url ? 'Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture.' : 'Fichier introuvable : cliquez pour le retrouver') + used} draggable
       onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-media', m.id); e.dataTransfer.effectAllowed = 'copy'; dragging.media = m.id; }} onDragEnd={endDrag}
       onClick={e => (m.url ? addToTimeline(m.id, e.shiftKey) : void replaceMediaFile(m.id))} onContextMenu={e => openMenu(e, menuForMedia(m.id))}>
       <span className="thumb">
         {poster ? <img src={poster} alt="" draggable={false} /> : <span className="ph-ico"><Icon name={m.kind === 'audio' ? 'music' : m.kind === 'image' ? 'image' : 'film'} /></span>}
         {m.kind !== 'image' && <span className="dur">{timecode(m.duration, fps)}</span>}
         {!m.url && <span className="lost">Introuvable</span>}
+        {uses > 0 && <span className="inuse" aria-label={`Dans le montage, ${uses} clip${uses > 1 ? 's' : ''}`}>✓{uses > 1 && <b>×{uses}</b>}</span>}
         <span className="add"><Icon name="plus" /></span>
       </span>
       <span className="tname">{m.name}</span>

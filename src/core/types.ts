@@ -1,4 +1,5 @@
 /** Modèle de données du projet. Aucune dépendance à l'interface ni à Electron. */
+import type { MotionKey } from './motion';
 
 export type MediaKind = 'video' | 'audio' | 'image';
 
@@ -95,6 +96,8 @@ export interface Clip {
   still: boolean;
   /** Clip désactivé : il garde sa place mais ne montre ni image ni son, à l'aperçu comme à l'export. */
   off: boolean;
+  /** Mouvement : points clés triés par instant local. Absent ou vide : transform et opacity s'appliquent tout le clip. */
+  keys?: MotionKey[];
 }
 
 /** Genre d'une piste. video est magnétique (clips à la suite, sans trou, avec transitions) ; les autres sont libres (chaque clip a sa position).
@@ -111,7 +114,15 @@ export const MAX_EXTRA_TRACKS = 12;
 export interface Marker { id: string; t: number; name: string; color: string; }
 export const MARKER_COLORS = ['#ff5d6c', '#ff9f43', '#ffd84d', '#22e3b6', '#4cc9f0', '#5f7cff', '#b388ff', '#9aa0ad'];
 /** État d'une piste : muette (son coupé), masquée (image non affichée), verrouillée (clips non modifiables). */
-export interface TrackState { muted?: boolean; hidden?: boolean; locked?: boolean; }
+/** volume : gain de toute la piste, 1 = inchangé ; absent = 1. */
+export interface TrackState { muted?: boolean; hidden?: boolean; locked?: boolean; volume?: number; }
+/** Gain le plus fort d'un clip ou d'une piste : 4 = 400 % (+12 dB), pour remonter une voix ou une vidéo enregistrée trop bas.
+ *  Clip et piste se multiplient (jusqu'à +24 dB) ; un limiteur évite la saturation. */
+export const MAX_VOLUME = 4;
+/** Position d'un volume sur une échelle de 0 à 1 : la moitié basse va du silence à 100 %, la moitié haute de 100 % au maximum,
+ *  en décibels (chaque cran ajoute autant à l'oreille). */
+export const volumeToPos = (v: number) => (v <= 1 ? Math.max(0, v) / 2 : 0.5 + 0.5 * Math.log(Math.min(v, MAX_VOLUME)) / Math.log(MAX_VOLUME));
+export const posToVolume = (x: number) => { const c = Math.max(0, Math.min(1, x)); return c <= 0.5 ? c * 2 : MAX_VOLUME ** ((c - 0.5) * 2); };
 
 export interface Project {
   version: 3;
