@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('ez', {
   exportFinish: () => ipcRenderer.invoke('export:finish'),
   exportCancel: () => ipcRenderer.invoke('export:cancel'),
   showLastExport: () => ipcRenderer.invoke('shell:show'),
+  version: () => ipcRenderer.invoke('app:version'),
+  onUpdate: fn => { ipcRenderer.removeAllListeners('update:state'); ipcRenderer.on('update:state', (_e, state) => fn(state)); },
+  updateDownload: () => ipcRenderer.invoke('update:download'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
   autoTest: () => ipcRenderer.invoke('autotest:get'),
   autoTestDone: result => ipcRenderer.invoke('autotest:done', result),
 });

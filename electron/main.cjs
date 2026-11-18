@@ -29,6 +29,12 @@ const num = (v, lo, hi, def) => { const n = Number(v); return Number.isFinite(n)
 /** Programme résolu une fois, en chemin absolu, sans jamais regarder le dossier courant (un projet reçu pourrait y cacher un faux ffmpeg.exe). */
 function resolveTool(name, override) {
   if (!app.isPackaged && override && path.isAbsolute(override) && fs.existsSync(override)) return override;
+  // FFmpeg livré avec l'application : dans resources/bin une fois installée, dans node_modules en développement.
+  const exe = name + (process.platform === 'win32' ? '.exe' : '');
+  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'bin', exe)
+    : name === 'ffmpeg' ? path.join(__dirname, '..', 'node_modules', 'ffmpeg-static', exe)
+    : path.join(__dirname, '..', 'node_modules', 'ffprobe-static', 'bin', process.platform, process.arch, exe);
+  try { if (fs.statSync(bundled).isFile()) return bundled; } catch { /* sinon : celui du système */ }
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     if (!dir || !path.isAbsolute(dir)) continue;
@@ -278,6 +284,23 @@ async function exportCancel() {
   try { fs.unlinkSync(j.out); } catch { /* rien à supprimer */ }
 }
 
+/* ---------- mises à jour ---------- */
+// Les versions publiées sur GitHub Releases. Rien n'est téléchargé ni installé sans action de l'utilisateur.
+let updater = null;
+function setupUpdates(win) {
+  if (!app.isPackaged || AUTOTEST) return;
+  try { updater = require('electron-updater').autoUpdater; } catch { return; }
+  updater.autoDownload = false; updater.autoInstallOnAppQuit = false;
+  const send = state => { if (!win.isDestroyed()) win.webContents.send('update:state', state); };
+  const notes = n => String(Array.isArray(n) ? n.map(x => x.note || '').join('\n') : n || '').replace(/<[^>]+>/g, '').slice(0, 4000);
+  updater.on('update-available', info => send({ status: 'available', version: String(info.version), notes: notes(info.releaseNotes) }));
+  updater.on('download-progress', p => send({ status: 'downloading', percent: Math.round(p.percent) }));
+  updater.on('update-downloaded', info => send({ status: 'ready', version: String(info.version) }));
+  updater.on('error', () => send({ status: 'error' }));
+  const check = () => updater.checkForUpdates().catch(() => {}); // hors ligne : on réessaiera
+  check(); setInterval(check, 24 * 3600e3);
+}
+
 /* ---------- fenêtre ---------- */
 function createWindow() {
   const win = new BrowserWindow({
@@ -369,7 +392,11 @@ app.whenReady().then(() => {
   handle('autotest:get', () => { if (!AUTOTEST) return null; try { return JSON.parse(fs.readFileSync(AUTOTEST, 'utf8')); } catch { return null; } });
   handle('autotest:done', (_e, result) => { if (!AUTOTEST) return; fs.writeFileSync(AUTOTEST + '.result.json', JSON.stringify(result, null, 1)); app.exit(result && result.ok ? 0 : 1); });
 
-  createWindow();
+  handle('app:version', () => app.getVersion());
+  handle('update:download', () => { updater?.downloadUpdate().catch(() => {}); });
+  handle('update:install', () => { if (!updater || job) return false; closing = true; updater.quitAndInstall(); return true; });
+
+  setupUpdates(createWindow());
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 

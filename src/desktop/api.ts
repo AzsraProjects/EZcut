@@ -18,7 +18,14 @@ export interface ExportRequest {
 }
 export interface AutoTest { media: string[]; out: string; height?: number; codec?: 'h264' | 'hevc'; }
 
+export type UpdateState = { status: 'available'; version: string; notes: string } | { status: 'downloading'; percent: number } | { status: 'ready'; version: string } | { status: 'error' };
+
 export interface EzApi {
+  version(): Promise<string>;
+  onUpdate(fn: (state: UpdateState) => void): void;
+  updateDownload(): Promise<void>;
+  /** Redémarre et installe. Renvoie false si un export est en cours. */
+  updateInstall(): Promise<boolean>;
   pickMedia(): Promise<ImportedFile[]>;
   importPaths(paths: string[]): Promise<ImportedFile[]>;
   /** Réouverture d'un projet : le processus principal décide, avec l'utilisateur, quels fichiers redeviennent lisibles. */

@@ -7,6 +7,7 @@ import { player } from '../engine/player';
 import { exportProject } from '../export/exporter';
 import { deleteSelection, loadProject, newProject, openProject, saveProject, serialise, splitAtPlayhead } from './actions';
 import { ExportDialog } from './ExportDialog';
+import { Updates } from './Updates';
 import { Icon } from './Icon';
 import { Inspector } from './Inspector';
 import { Library } from './Library';
@@ -164,6 +165,7 @@ export function App() {
           onDrag={(d, start) => { if (start) drag.current = st().layout.tlH; setL({ tlH: clampN(drag.current - d, 150, Math.max(150, innerHeight - 260)) }); }} />
         <Timeline height={Math.min(L.tlH, Math.max(150, innerHeight - 260))} />
       </>}
+      <Updates />
       {exportOpen && <ExportDialog />}
       {recovered && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="Projet retrouvé">

@@ -14,5 +14,6 @@ if (dev) {
   env.EZCUT_DEV_URL = server.resolvedUrls?.local[0] ?? 'http://localhost:5173/';
 }
 const electron = createRequire(import.meta.url)('electron');
-const child = spawn(electron, ['.'], { stdio: 'inherit', env });
+const script = process.argv.includes('--script') ? process.argv[process.argv.indexOf('--script') + 1] : '.';
+const child = spawn(electron, [script], { stdio: 'inherit', env });
 child.on('close', async code => { await server?.close(); process.exit(code ?? 0); });
