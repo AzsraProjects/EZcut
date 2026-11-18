@@ -1,10 +1,12 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
-import { addOverlay, appendClip, isFree, moveClip, moveFree, projectDuration, startsOf, trimClip } from '../core/ops';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { addOverlay, addSound, appendClip, isFree, isSound, moveClip, moveFree, patchClip, projectDuration, startsOf, trimClip } from '../core/ops';
 import type { Clip, Project, TrackId } from '../core/types';
 import { catalog } from '../effects/catalog';
 import { player } from '../engine/player';
 import { applyItem, deleteSelection, selectClip, splitAtPlayhead } from './actions';
+import { openMenu } from './ContextMenu';
 import { Icon } from './Icon';
+import { menuForClip, menuForLane, menuForTransition } from './menus';
 import { useStore } from './store';
 import { subscribeTime, timecode } from './time';
 
@@ -14,41 +16,65 @@ const LANES: { id: TrackId; label: string; icon: string; hint: string }[] = [
   { id: 'text', label: 'Titres', icon: 'type', hint: 'Choisissez un modèle dans l\'onglet Titres' },
   { id: 'overlay', label: 'Par-dessus', icon: 'layers', hint: 'Glissez ici une vidéo ou une image à poser par-dessus la vidéo (logo, image dans l\'image)' },
   { id: 'video', label: 'Vidéo', icon: 'film', hint: 'Piste principale : glissez une vidéo ou une image ici, ou cliquez dessus dans la bibliothèque' },
-  { id: 'audio', label: 'Son', icon: 'music', hint: 'Glissez une musique ou un son ici' },
+  { id: 'sound', label: 'Son', icon: 'vol', hint: 'Son détaché d\'une vidéo (clic droit sur un clip), voix, bruitages' },
+  { id: 'audio', label: 'Musique', icon: 'music', hint: 'Glissez une musique ici' },
 ];
+/** Hauteur cumulée des pistes de taille fixe, pour donner le reste à la piste Vidéo. */
+const FIXED = 34 + 46 + 40 + 40;
 
-function ClipView({ clip, index, track, start, pps, project }: { clip: Clip; index: number; track: TrackId; start: number; pps: number; project: Project }) {
+/** Pendant qu'on rogne le début d'un clip de la piste principale : décalage visuel des clips à partir de lui, pour que
+ *  le bord saisi suive la souris. Au relâchement, le décalage disparaît et la suite se resserre. */
+interface TrimShift { index: number; seconds: number; }
+
+function ClipView({ clip, index, track, start, pps, project, shift, onShift }: { clip: Clip; index: number; track: TrackId; start: number; pps: number; project: Project; shift: number; onShift: (s: TrimShift | null) => void }) {
   const selected = useStore(s => s.sel?.kind === 'clip' && s.sel.id === clip.id);
   const media = project.media.find(m => m.id === clip.mediaId);
   const strip = useStore(s => s.thumbs[clip.mediaId]?.strip);
-  const free = isFree(track);
+  const free = isFree(track), sound = isSound(track), visual = !sound;
+  const hasSound = sound || (!!media?.hasAudio && media.kind === 'video' && !clip.still);
   /** Instant de la timeline sous le pointeur, à l'intérieur de ce clip. */
   const timeAt = (el: HTMLElement, clientX: number) => start + Math.max(0, Math.min(clip.dur - 0.001, (clientX - el.getBoundingClientRect().left) / pps));
+  const capture = (e: React.PointerEvent, move: (ev: PointerEvent) => void, end?: (ev: PointerEvent) => void) => {
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const up = (ev: PointerEvent) => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); end?.(ev); };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  };
 
   // Rognage : le projet d'origine est figé au début du geste, chaque mouvement repart de lui.
   const trim = (edge: 'start' | 'end') => (e: React.PointerEvent) => {
     e.preventDefault(); e.stopPropagation();
-    const x0 = e.clientX, base = st().project, el = e.currentTarget as HTMLElement;
+    const x0 = e.clientX, base = st().project;
     st().checkpoint(); st().select({ kind: 'clip', id: clip.id });
-    el.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => st().apply(() => trimClip(base, clip.id, edge, (ev.clientX - x0) / pps), false);
-    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
-    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    capture(e, ev => {
+      st().apply(() => trimClip(base, clip.id, edge, (ev.clientX - x0) / pps), false);
+      // Piste principale, bord gauche : ce qui a été retiré du début est affiché comme un retrait à gauche du clip.
+      if (edge === 'start' && !free) { const now = st().project.video.find(c => c.id === clip.id); if (now) onShift({ index, seconds: clip.dur - now.dur }); }
+    }, () => onShift(null));
+  };
+  // Fondu : la poignée du coin se tire vers l'intérieur du clip. Sur une piste de son, elle règle le son ; ailleurs, l'image.
+  const fade = (side: 'in' | 'out') => (e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    type K = 'fadeIn' | 'fadeOut' | 'vfadeIn' | 'vfadeOut';
+    const x0 = e.clientX, key: K = sound ? (side === 'in' ? 'fadeIn' : 'fadeOut') : (side === 'in' ? 'vfadeIn' : 'vfadeOut');
+    const other: K = sound ? (side === 'in' ? 'fadeOut' : 'fadeIn') : (side === 'in' ? 'vfadeOut' : 'vfadeIn'), v0 = clip[key];
+    st().checkpoint(); st().select({ kind: 'clip', id: clip.id });
+    capture(e, ev => {
+      const d = (ev.clientX - x0) / pps * (side === 'in' ? 1 : -1);
+      st().apply(p => patchClip(p, clip.id, c => { c[key] = Math.max(0, Math.min(c.dur - c[other], v0 + d)); }), false);
+    });
   };
   // Piste libre : le clip se déplace dans le temps en le faisant glisser ; un simple clic le sélectionne et y place la tête de lecture.
   const slide = (e: React.PointerEvent) => {
     if (!free || e.button !== 0) return;
     const x0 = e.clientX, base = st().project, el = e.currentTarget as HTMLElement;
     let moved = false;
-    el.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
+    capture(e, ev => {
       const dx = ev.clientX - x0;
       if (!moved && Math.abs(dx) < 4) return;
       if (!moved) { moved = true; st().checkpoint(); st().select({ kind: 'clip', id: clip.id }); }
       st().apply(() => moveFree(base, clip.id, clip.start + dx / pps), false);
-    };
-    const up = (ev: PointerEvent) => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); if (!moved) selectClip(clip.id, timeAt(el, ev.clientX)); };
-    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    }, ev => { if (!moved) selectClip(clip.id, timeAt(el, ev.clientX)); });
   };
   const onDrop = (e: React.DragEvent) => {
     const item = e.dataTransfer.getData('application/x-ezcut-item'), moved = e.dataTransfer.getData('application/x-ezcut-clip');
@@ -64,16 +90,27 @@ function ClipView({ clip, index, track, start, pps, project }: { clip: Clip; ind
       st().apply(p => (p[track].some(c => c.id === moved) ? moveClip(p, moved, index + (after ? 1 : 0)) : p));
     }
   };
-  const label = clip.text ? clip.text.content.split('\n')[0] || 'Titre' : media?.name ?? 'Média introuvable';
+  const label = clip.text ? clip.text.content.split('\n')[0] || 'Titre' : (clip.still ? 'Arrêt sur image — ' : '') + (media?.name ?? 'Média introuvable');
+  const fin = sound ? clip.fadeIn : clip.vfadeIn, fout = sound ? clip.fadeOut : clip.vfadeOut;
+  const muted = hasSound && clip.volume <= 0;
+  const width = Math.max(4, clip.dur * pps);
   return (
-    <div className={`clip ${track}${selected ? ' sel' : ''}`} role="button" tabIndex={0} aria-pressed={selected} draggable={!free} data-clip={clip.id}
-      style={{ left: start * pps, width: Math.max(4, clip.dur * pps), backgroundImage: (track === 'video' || track === 'overlay') && strip ? `url("${strip}")` : undefined }}
+    <div className={`clip ${track}${selected ? ' sel' : ''}${clip.still ? ' still' : ''}`} role="button" tabIndex={0} aria-pressed={selected} draggable={!free} data-clip={clip.id}
+      // La bande d'images glisse avec le point d'entrée : en rognant le début, on voit le contenu défiler sous le bord.
+      style={{ left: (start + shift) * pps, width, backgroundImage: (track === 'video' || track === 'overlay') && strip ? `url("${strip}")` : undefined, backgroundPositionX: clip.still ? 0 : -clip.in * pps }}
+      onContextMenu={e => { e.stopPropagation(); openMenu(e, menuForClip(clip.id)); }}
       onClick={free ? undefined : e => selectClip(clip.id, timeAt(e.currentTarget, e.clientX))} onPointerDown={slide} onKeyDown={e => { if (e.key === 'Enter') selectClip(clip.id); }}
       onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-clip', clip.id); e.dataTransfer.effectAllowed = 'move'; }}
       onDragOver={e => { if (e.dataTransfer.types.some(t => t.startsWith('application/x-ezcut'))) e.preventDefault(); }} onDrop={onDrop}>
-      <em>{label}{clip.fx.length > 0 && <b>fx {clip.fx.length}</b>}</em>
+      {fin > 0 && <span className="fade in" style={{ width: fin * pps }} />}
+      {fout > 0 && <span className="fade out" style={{ width: fout * pps }} />}
+      <em>{muted && <Icon name="mute" />}{label}{clip.fx.length > 0 && <b>fx {clip.fx.length}</b>}</em>
       <span className="grip l" draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={trim('start')} title="Rogner le début" />
       <span className="grip r" draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={trim('end')} title="Rogner la fin" />
+      {width > 46 && (visual || hasSound) && <>
+        <span className="fh in" style={{ left: Math.min(fin * pps, width - 10) }} draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={fade('in')} title={sound ? 'Fondu d\'entrée du son : tirez vers la droite' : 'Fondu d\'ouverture de l\'image : tirez vers la droite'} />
+        <span className="fh out" style={{ right: Math.min(fout * pps, width - 10) }} draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={fade('out')} title={sound ? 'Fondu de sortie du son : tirez vers la gauche' : 'Fondu de fermeture de l\'image : tirez vers la gauche'} />
+      </>}
     </div>
   );
 }
@@ -84,8 +121,9 @@ export function Timeline({ height }: { height: number }) {
   const sel = useStore(s => s.sel);
   const ph = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const [trimShift, setTrimShift] = useState<TrimShift | null>(null);
   const total = projectDuration(project), span = Math.max(30, total + 10), width = span * pps;
-  const count = project.video.length + project.audio.length + project.overlay.length + project.text.length;
+  const count = project.video.length + project.audio.length + project.sound.length + project.overlay.length + project.text.length;
 
   /** Zoom qui fait tenir tout le montage dans la largeur visible. */
   const fit = () => {
@@ -137,7 +175,7 @@ export function Timeline({ height }: { height: number }) {
   };
   const dropOnLane = (track: TrackId) => (e: React.DragEvent) => {
     const mediaId = e.dataTransfer.getData('application/x-ezcut-media'), moved = e.dataTransfer.getData('application/x-ezcut-clip'), item = e.dataTransfer.getData('application/x-ezcut-item');
-    const at = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps, p = st().project;
+    const at = Math.max(0, (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps), p = st().project;
     if (item) {
       const it = catalog.byId.get(item);
       if (!it) return;
@@ -154,10 +192,10 @@ export function Timeline({ height }: { height: number }) {
       const m = p.media.find(x => x.id === mediaId);
       if (!m) return;
       if (track === 'text') { st().notify('Cette piste accueille les titres.'); return; }
-      if ((m.kind === 'audio') !== (track === 'audio')) { st().notify(track === 'audio' ? 'Cette piste accueille les fichiers audio.' : 'Cette piste accueille les vidéos et les images.'); return; }
-      // Piste magnétique : le média s'insère entre les deux clips les plus proches de l'endroit visé.
-      const starts = startsOf(p, track), index = p[track].filter((c, i) => starts[i] + c.dur / 2 < at).length;
-      const r = track === 'overlay' ? addOverlay(p, mediaId, at) : appendClip(p, mediaId, index);
+      if ((m.kind === 'audio') !== isSound(track)) { st().notify(isSound(track) ? 'Cette piste accueille les fichiers audio.' : 'Cette piste accueille les vidéos et les images.'); return; }
+      // Piste principale : le média s'insère entre les deux clips les plus proches de l'endroit visé. Ailleurs : à l'instant visé.
+      const starts = startsOf(p, 'video'), index = p.video.filter((c, i) => starts[i] + c.dur / 2 < at).length;
+      const r = track === 'overlay' ? addOverlay(p, mediaId, at) : track === 'audio' || track === 'sound' ? addSound(p, mediaId, track, at) : appendClip(p, mediaId, index);
       if (r) { st().apply(() => r.project); selectClip(r.clipId); }
     } else if (moved && !isFree(track)) { e.preventDefault(); st().apply(q => (q[track].some(c => c.id === moved) ? moveClip(q, moved, q[track].length) : q)); }
   };
@@ -170,7 +208,7 @@ export function Timeline({ height }: { height: number }) {
   const vStarts = startsOf(project, 'video');
 
   return (
-    <section className="tl" style={{ height, ['--lane-v' as string]: `${Math.max(44, height - 39 - 24 - 34 - 46 - 46 - 14)}px` }}>
+    <section className="tl" style={{ height, ['--lane-v' as string]: `${Math.max(44, height - 39 - 24 - FIXED - 14)}px` }}>
       <div className="tools">
         <button className="ib" title="Couper le clip en deux à la tête de lecture (S)" aria-label="Scinder" onClick={splitAtPlayhead}><Icon name="cut" /></button>
         <button className="ib" title="Supprimer la sélection (Suppr)" aria-label="Supprimer" disabled={!sel} onClick={deleteSelection}><Icon name="trash" /></button>
@@ -191,15 +229,17 @@ export function Timeline({ height }: { height: number }) {
             {LANES.map(l => {
               const starts = startsOf(project, l.id);
               return (
-                <div key={l.id} className={`lane ${l.id}`} onDragOver={allow} onDrop={dropOnLane(l.id)} onClick={clickLane}>
+                <div key={l.id} className={`lane ${l.id}`} onDragOver={allow} onDrop={dropOnLane(l.id)} onClick={clickLane}
+                  onContextMenu={e => openMenu(e, menuForLane(l.id, Math.max(0, (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps)))}>
                   {project[l.id].length === 0 && <span className="lane-empty">{l.hint}</span>}
-                  {project[l.id].map((c, i) => <ClipView key={c.id} clip={c} index={i} track={l.id} start={starts[i]} pps={pps} project={project} />)}
-                  {l.id === 'video' && project.video.slice(0, -1).map((c, i) => {
+                  {project[l.id].map((c, i) => <ClipView key={c.id} clip={c} index={i} track={l.id} start={starts[i]} pps={pps} project={project}
+                    shift={l.id === 'video' && trimShift && i >= trimShift.index ? trimShift.seconds : 0} onShift={setTrimShift} />)}
+                  {l.id === 'video' && !trimShift && project.video.slice(0, -1).map((c, i) => {
                     const cut = vStarts[i] + c.dur, tr = c.transition, def = tr ? catalog.byId.get(tr.effectId) : null;
                     const on = sel?.kind === 'transition' && sel.id === c.id;
                     return tr
                       ? <button key={'t' + c.id} className={on ? 'tmark sel' : 'tmark'} style={{ left: cut * pps, width: Math.max(26, tr.dur * pps) }} title={`Transition : ${def?.label ?? tr.effectId}`}
-                          onClick={() => st().select({ kind: 'transition', id: c.id })}><Icon name="trans" /><span>{def?.label ?? 'Transition'}</span></button>
+                          onContextMenu={e => { e.stopPropagation(); openMenu(e, menuForTransition(c.id)); }} onClick={() => st().select({ kind: 'transition', id: c.id })}><Icon name="trans" /><span>{def?.label ?? 'Transition'}</span></button>
                       : <button key={'t' + c.id} className="tmark none" style={{ left: cut * pps }} title="Ajouter une transition sur cette coupe" aria-label="Ajouter une transition sur cette coupe"
                           onClick={() => { st().select({ kind: 'clip', id: c.id }); st().setTab('transitions'); }}><Icon name="plus" /></button>;
                   })}

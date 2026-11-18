@@ -40,6 +40,8 @@ export interface EzApi {
   importPaths(paths: string[]): Promise<ImportedFile[]>;
   /** Réouverture d'un projet : le processus principal décide, avec l'utilisateur, quels fichiers redeviennent lisibles. */
   relinkMedia(paths: string[]): Promise<ImportedFile[]>;
+  /** Montre dans l'explorateur un média déjà importé. */
+  revealMedia(path: string): Promise<void>;
   newProject(): Promise<void>;
   confirmDiscard(): Promise<'save' | 'discard' | 'cancel'>;
   pathForFile(file: File): string;

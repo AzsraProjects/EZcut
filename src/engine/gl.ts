@@ -99,7 +99,7 @@ export class Engine {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
     const vs = '#version 300 es\nin vec2 isf_position;out vec2 v;void main(){v=isf_position*.5+.5;gl_Position=vec4(isf_position,0.,1.);}';
-    this.copy = this.link(vs, '#version 300 es\nprecision highp float;in vec2 v;uniform sampler2D t;out vec4 o;void main(){o=vec4(texture(t,v).rgb,1.);}');
+    this.copy = this.link(vs, '#version 300 es\nprecision highp float;in vec2 v;uniform sampler2D t;uniform float gain;out vec4 o;void main(){o=vec4(texture(t,v).rgb*gain,1.);}');
     // Place l'image source dans le cadre du projet : ajustement sans déformation, puis échelle, position, rotation.
     this.fit = this.link(vs, `#version 300 es
 precision highp float;in vec2 v;uniform sampler2D t;uniform vec2 box;uniform vec2 off;uniform float scale,rot,aspect,keepAlpha;out vec4 o;
@@ -299,10 +299,12 @@ o=vec4(mix(b,r,a),1.);}`);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  blit(tex: WebGLTexture, w: number, h: number, out: Target | null) {
+  /** Copie une image. gain < 1 l'assombrit vers le noir (fondu de l'image). */
+  blit(tex: WebGLTexture, w: number, h: number, out: Target | null, gain = 1) {
     const gl = this.gl, p = this.copy;
     gl.useProgram(p.prog);
     this.bind(out, w, h);
+    gl.uniform1f(this.u(p, 'gain'), gain);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(this.u(p, 't'), 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

@@ -5,7 +5,9 @@ import { player, TH, TW } from '../engine/player';
 import { animState, drawText } from '../engine/text';
 import { addTitle, addToTimeline, applyItem, catalogList } from './actions';
 import { TITLES, type TitlePreset } from './titles';
+import { openMenu } from './ContextMenu';
 import { Icon } from './Icon';
+import { menuForMedia } from './menus';
 import { importWithDialog } from './media';
 import { useStore, type Tab } from './store';
 import { timecode } from './time';
@@ -36,7 +38,8 @@ const FxTile = memo(function FxTile({ item, observe }: { item: CatItem; observe:
   return (
     <button className={live ? 'tile live' : 'tile'} ref={el => observe(el, item)} title={`${('desc' in item && item.desc) || item.label}\n${item.by} · licence ${item.license}`}
       draggable onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-item', item.id); e.dataTransfer.effectAllowed = 'copy'; }}
-      onPointerEnter={enter} onPointerLeave={leave} onFocus={enter} onBlur={leave} onClick={() => applyItem(item)}>
+      onPointerEnter={enter} onPointerLeave={leave} onFocus={enter} onBlur={leave} onClick={() => applyItem(item)}
+      onContextMenu={e => openMenu(e, [{ label: item.kind === 'transition' ? 'Poser sur la coupe la plus proche' : 'Appliquer au clip sélectionné', action: () => applyItem(item) }])}>
       <span className="thumb"><canvas ref={canvas} width={TW} height={TH} /><span className="tag">Aperçu</span><span className="add"><Icon name="plus" /></span></span>
       <span className="tname">{item.label}</span>
     </button>
@@ -74,7 +77,7 @@ function MediaTile({ m }: { m: Media }) {
   return (
     <button className="tile" title="Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture." draggable
       onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-media', m.id); e.dataTransfer.effectAllowed = 'copy'; }}
-      onClick={e => addToTimeline(m.id, e.shiftKey)}>
+      onClick={e => addToTimeline(m.id, e.shiftKey)} onContextMenu={e => openMenu(e, menuForMedia(m.id))}>
       <span className="thumb">
         {poster ? <img src={poster} alt="" draggable={false} /> : <span className="ph-ico"><Icon name={m.kind === 'audio' ? 'music' : m.kind === 'image' ? 'image' : 'film'} /></span>}
         {m.kind !== 'image' && <span className="dur">{timecode(m.duration, fps)}</span>}

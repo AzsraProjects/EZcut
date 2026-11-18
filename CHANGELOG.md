@@ -9,7 +9,7 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 ### Nouveautés
 
 - Importer des vidéos, des sons et des images, par bouton ou glisser-déposer.
-- Monter sur quatre pistes : titres, incrustation, piste principale et audio. Scinder, rogner, déplacer, réordonner, supprimer.
+- Monter sur cinq pistes : titres, incrustation, piste principale, son et musique. Scinder, rogner, déplacer, réordonner, supprimer.
 - Annuler et rétablir chaque action.
 - Titres : 14 modèles (titres, synthés, sous-titres, animés) avec police, couleur, contour, ombre, cartouche et animations d'entrée et de sortie.
 - Incrustation : poser une vidéo ou une image par-dessus la piste principale, avec opacité et mode de fusion.
@@ -21,6 +21,11 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Choisir le format du projet : 16:9, 9:16, 1:1 ou 4:5.
 - Aperçu toujours net : il est calculé à la taille où il est affiché, avec un réglage de qualité pour les ordinateurs modestes.
 - Zoom de la timeline avec Ctrl + molette, centré sur le pointeur.
+- Clic droit sur un clip, une piste, une transition ou un média : couper, copier, coller, dupliquer, rogner jusqu'à la tête de lecture, pivoter, retourner, copier les effets d'un clip à l'autre, retirer un média.
+- Arrêt sur image à la tête de lecture.
+- Détacher le son d'une vidéo sur une piste Son à part, où il se règle, se coupe et se déplace seul ; la musique a sa propre piste, et s'y place librement.
+- Fondus à la souris : une poignée dans chaque coin d'un clip règle le fondu de l'image (ou du son, sur les pistes de son).
+- Rogner le début d'un clip suit la souris : le bord gauche se déplace, et la bande d'images défile dessous.
 - Disposition libre : chaque panneau se redimensionne, se masque, et la bibliothèque et l'inspecteur peuvent échanger de côté.
 - Enregistrer et rouvrir un projet ; sauvegarde automatique toutes les 20 secondes, proposée à la restauration après une fermeture inattendue.
 - Exporter en MP4, H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe (NVIDIA, Intel, AMD).

@@ -451,6 +451,7 @@ app.whenReady().then(() => {
   });
   // Fichiers déposés par l'utilisateur dans la fenêtre.
   handle('media:import', async (_e, paths) => { const out = await probeAll(paths); remember(out.map(f => f.path)); return out; });
+  handle('media:reveal', (_e, p) => { if (typeof p === 'string' && allowed.has(p) && fs.existsSync(p)) shell.showItemInFolder(p); });
   handle('media:relink', (e, paths) => relink(winOf(e), paths));
   handle('project:new', () => { projectPath = null; allowed.clear(); });
   // Avant de remplacer un projet modifié (nouveau, ouvrir, restaurer) : enregistrer, abandonner ou renoncer.

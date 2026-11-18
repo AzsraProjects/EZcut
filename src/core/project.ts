@@ -62,10 +62,11 @@ function clip(v: unknown, mediaIds: Set<string>, isText: boolean): Clip | null {
   return {
     id: str(v.id, 80), mediaId: isText ? '' : (v.mediaId as string), start: num(v.start, 0, 86400 * 4, 0), in: num(v.in, 0, 86400 * 4, 0), dur,
     volume: num(v.volume, 0, 1, 1), fadeIn: num(v.fadeIn, 0, dur, 0), fadeOut: num(v.fadeOut, 0, dur - num(v.fadeIn, 0, dur, 0), 0),
+    vfadeIn: num(v.vfadeIn, 0, dur, 0), vfadeOut: num(v.vfadeOut, 0, dur - num(v.vfadeIn, 0, dur, 0), 0),
     transform: { scale: num(t.scale, 0.01, 20, 1), x: num(t.x, -5, 5, 0), y: num(t.y, -5, 5, 0), rot: num(t.rot, -3600, 3600, 0) },
     opacity: num(v.opacity, 0, 1, 1), blend: oneOf<BlendMode>(v.blend, BLEND_MODES, 'normal'),
     color: params(v.color), fx: isText ? [] : (Array.isArray(v.fx) ? v.fx : []).slice(0, MAX_FX).map(fx).filter((f): f is FxInstance => !!f),
-    transition: transition(v.transition), text: style,
+    transition: transition(v.transition), text: style, still: !isText && v.still === true,
   };
 }
 
@@ -79,19 +80,22 @@ export function parseProject(json: string): Project | null {
   const ids = new Set(med.map(m => m.id)), kindOf = new Map(med.map(m => [m.id, m.kind]));
   const clipIds = new Set<string>();
   const fresh = (c: Clip | null): c is Clip => !!c && !clipIds.has(c.id) && !!clipIds.add(c.id);
-  const mediaTrack = (list: unknown, audio: boolean) => (Array.isArray(list) ? list : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, false))
-    .filter((c): c is Clip => !!c && (kindOf.get(c.mediaId) === 'audio') === audio).filter(fresh);
-  const video = mediaTrack(raw.video, false), audio = mediaTrack(raw.audio, true), overlay = mediaTrack(raw.overlay, false);
+  // Pistes d'image : vidéos et images. Pistes de son : fichiers audio, et vidéos dont le son a été détaché.
+  const mediaTrack = (list: unknown, sound: boolean) => (Array.isArray(list) ? list : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, false))
+    .filter((c): c is Clip => !!c && (sound ? kindOf.get(c.mediaId) !== 'image' : kindOf.get(c.mediaId) !== 'audio')).filter(fresh);
+  const video = mediaTrack(raw.video, false), audio = mediaTrack(raw.audio, true), sound = mediaTrack(raw.sound, true), overlay = mediaTrack(raw.overlay, false);
+  // Version 1 : la piste audio était magnétique, les clips s'y suivaient sans position propre.
+  if (raw.version === 1) { let at = 0; for (const c of audio) { c.start = at; at += c.dur; } }
   const titles = (Array.isArray(raw.text) ? raw.text : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, true)).filter(fresh);
   // Une transition n'existe qu'entre deux clips de la piste principale.
   video.forEach((c, i) => { const next = video[i + 1]; if (!next) c.transition = null; else if (c.transition) c.transition.dur = Math.min(c.dur, next.dur, Math.max(0.2, c.transition.dur)); });
-  audio.forEach(c => { c.transition = null; c.fx = []; });
+  for (const c of [...audio, ...sound]) { c.transition = null; c.fx = []; c.still = false; c.vfadeIn = 0; c.vfadeOut = 0; }
   // Pistes libres : triées, sans recouvrement (un clip qui en chevauche un autre est repoussé après lui).
-  for (const list of [overlay, titles]) {
+  for (const list of [overlay, titles, audio, sound]) {
     list.sort((a, b) => a.start - b.start);
     list.forEach((c, i) => { c.transition = null; const prev = list[i - 1]; if (prev && c.start < prev.start + prev.dur) c.start = prev.start + prev.dur; });
   }
   const even = (n: number) => Math.round(n / 2) * 2;
   return { version: 2, name: str(raw.name, 120, 'Projet sans titre'), width: even(num(raw.width, 16, 8192, 1920)), height: even(num(raw.height, 16, 8192, 1080)),
-    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, overlay, text: titles };
+    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, sound, overlay, text: titles };
 }

@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('ez', {
   pickMedia: () => ipcRenderer.invoke('media:pick'),
   importPaths: paths => ipcRenderer.invoke('media:import', paths),
+  revealMedia: path => ipcRenderer.invoke('media:reveal', path),
   relinkMedia: paths => ipcRenderer.invoke('media:relink', paths),
   pathForFile: file => webUtils.getPathForFile(file),
   confirmDiscard: () => ipcRenderer.invoke('project:confirm-discard'),

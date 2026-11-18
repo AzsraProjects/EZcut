@@ -11,16 +11,19 @@ export interface ExportResult { ok: boolean; path?: string; error?: string; canc
 export function audioPlan(p: Project): AudioSegment[][] {
   const seg = (c: Clip): AudioSegment => {
     const m = p.media.find(x => x.id === c.mediaId);
-    return { path: m && m.hasAudio && m.kind !== 'image' ? m.path : null, in: c.in, dur: c.dur, volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut };
+    return { path: m && m.hasAudio && m.kind !== 'image' && !c.still ? m.path : null, in: c.in, dur: c.dur, volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut };
   };
-  // Piste libre : les trous entre les clips sont comblés par du silence.
-  const free: AudioSegment[] = [];
-  let at = 0;
-  for (const c of [...p.overlay].sort((a, b) => a.start - b.start)) {
-    if (c.start > at + 1e-6) free.push({ path: null, in: 0, dur: c.start - at, volume: 0 });
-    free.push(seg(c)); at = c.start + c.dur;
-  }
-  return [p.video.map(seg), p.audio.map(seg), free.some(s => s.path) ? free : []];
+  // Piste libre : les trous entre les clips sont comblés par du silence. Une piste sans aucun son est omise.
+  const free = (track: Clip[]): AudioSegment[] => {
+    const out: AudioSegment[] = [];
+    let at = 0;
+    for (const c of [...track].sort((a, b) => a.start - b.start)) {
+      if (c.start > at + 1e-6) out.push({ path: null, in: 0, dur: c.start - at, volume: 0 });
+      out.push(seg(c)); at = c.start + c.dur;
+    }
+    return out.some(s => s.path) ? out : [];
+  };
+  return [p.video.map(seg), free(p.audio), free(p.overlay), free(p.sound)];
 }
 
 export function exportSize(p: Project, height: number): { width: number; height: number } {

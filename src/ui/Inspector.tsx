@@ -10,7 +10,7 @@ import { timecode } from './time';
 const st = () => useStore.getState();
 const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', screen: 'Écran (éclaircit)', multiply: 'Produit (assombrit)', add: 'Addition', overlay: 'Contraste renforcé' };
 const ANIM_LABELS: Record<TextAnim, string> = { none: 'Aucune', fade: 'Fondu', slide: 'Glissement', pop: 'Rebond', type: 'Machine à écrire' };
-const TRACK_LABELS: Record<TrackId, string> = { video: 'piste Vidéo', overlay: 'piste Par-dessus', text: 'piste Titres', audio: 'piste Son' };
+const TRACK_LABELS: Record<TrackId, string> = { video: 'piste Vidéo', overlay: 'piste Par-dessus', text: 'piste Titres', sound: 'piste Son', audio: 'piste Musique' };
 
 /** Curseur : un point d'annulation au début du geste, puis des mises à jour sans historique. */
 function Slider({ label, value, min, max, step, digits = 2, unit = '', onChange }: { label: string; value: number; min: number; max: number; step?: number; digits?: number; unit?: string; onChange: (v: number) => void }) {
@@ -83,10 +83,10 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
   const media = project.media.find(m => m.id === clip.mediaId);
   const poster = useStore(s => s.thumbs[clip.mediaId]?.poster);
   const edit = (fn: (c: Clip) => void) => st().apply(p => patchClip(p, clip.id, fn), false);
-  const isAudio = track === 'audio', isText = !!clip.text, layered = track === 'overlay' || track === 'text', col = catalog.color;
+  const isAudio = track === 'audio' || track === 'sound', isText = !!clip.text, layered = track === 'overlay' || track === 'text', col = catalog.color;
   const colorVals: Params = col ? { ...Object.fromEntries(col.inputs.map(i => [i.NAME, i.DEFAULT as ParamValue])), ...clip.color } : {};
-  const tf = clip.transform, hasSound = isAudio || (!!media?.hasAudio && media.kind !== 'image');
-  const kind = isText ? 'Titre' : isAudio ? 'Audio' : media?.kind === 'image' ? 'Image' : 'Vidéo';
+  const tf = clip.transform, hasSound = isAudio || (!!media?.hasAudio && media.kind !== 'image' && !clip.still);
+  const kind = isText ? 'Titre' : isAudio ? 'Audio' : clip.still ? 'Arrêt sur image' : media?.kind === 'image' ? 'Image' : 'Vidéo';
   return <>
     <div className="ihead">
       {poster && <img src={poster} alt="" />}
@@ -100,6 +100,11 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
       <Slider label="Vertical" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.y * 100} onChange={v => edit(c => { c.transform.y = v / 100; })} />
       <Slider label="Rotation" min={-180} max={180} step={1} digits={0} unit="°" value={tf.rot} onChange={v => edit(c => { c.transform.rot = v; })} />
     </div>}
+    {!isAudio && <div className="sec">
+      <h3>Fondu de l'image</h3>
+      <Slider label="Ouverture" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.vfadeIn} onChange={v => edit(c => { c.vfadeIn = Math.min(v, c.dur); c.vfadeOut = Math.min(c.vfadeOut, c.dur - c.vfadeIn); })} />
+      <Slider label="Fermeture" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.vfadeOut} onChange={v => edit(c => { c.vfadeOut = Math.min(v, c.dur); c.vfadeIn = Math.min(c.vfadeIn, c.dur - c.vfadeOut); })} />
+    </div>}
     {layered && <div className="sec">
       <h3>Fusion</h3>
       <Slider label="Opacité" min={0} max={100} step={1} digits={0} unit=" %" value={Math.round(clip.opacity * 100)} onChange={v => edit(c => { c.opacity = v / 100; })} />
@@ -109,7 +114,7 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
       <h3>Couleur<button className="btn sm" onClick={() => st().apply(p => patchClip(p, clip.id, c => { c.color = {}; }))}>Réinitialiser</button></h3>
       <IsfParams inputs={col.inputs} values={colorVals} onChange={(n, v) => edit(c => { c.color[n] = v; })} />
     </div>}
-    {(isText || media?.kind === 'image') && <div className="sec">
+    {(isText || clip.still || media?.kind === 'image') && <div className="sec">
       <h3>Durée{layered && <button className="btn sm" title="Afficher du début à la fin de la vidéo" onClick={() => { const before = st().project; st().apply(p => spanWhole(p, clip.id)); if (st().project === before) st().notify('Impossible : la piste principale est vide, ou un autre clip occupe déjà cette piste.'); }}>Toute la vidéo</button>}</h3>
       <Slider label="Durée" min={0.5} max={Math.max(30, Math.ceil(clip.dur))} step={0.1} digits={1} unit=" s" value={clip.dur} onChange={v => st().apply(p => trimClip(p, clip.id, 'end', v - (findClip(p, clip.id)?.clip.dur ?? v)), false)} />
     </div>}

@@ -79,6 +79,9 @@ export interface Clip {
   /** Fondus du son, en secondes. */
   fadeIn: number;
   fadeOut: number;
+  /** Fondus de l'image, en secondes : depuis et vers le noir sur la piste principale, la transparence au-dessus. */
+  vfadeIn: number;
+  vfadeOut: number;
   transform: Transform;
   /** Opacité et mode de fusion, pour les pistes au-dessus de la piste principale. */
   opacity: number;
@@ -88,10 +91,13 @@ export interface Clip {
   /** Transition vers le clip suivant (piste principale uniquement). */
   transition: TransitionInstance | null;
   text: TextStyle | null;
+  /** Arrêt sur image : le clip montre l'image du média située à `in` pendant toute sa durée, sans son. */
+  still: boolean;
 }
 
-/** video et audio sont magnétiques (clips à la suite, sans trou) ; overlay et text sont libres. */
-export type TrackId = 'video' | 'audio' | 'overlay' | 'text';
+/** video est magnétique (clips à la suite, sans trou, avec transitions) ; les autres pistes sont libres (chaque clip a sa position).
+ *  sound reçoit le son détaché d'une vidéo, les voix, les bruitages ; audio la musique. */
+export type TrackId = 'video' | 'audio' | 'sound' | 'overlay' | 'text';
 
 export interface Project {
   version: 2;
@@ -101,7 +107,10 @@ export interface Project {
   fps: number;
   media: Media[];
   video: Clip[];
+  /** Musique. */
   audio: Clip[];
+  /** Son détaché, voix, bruitages. */
+  sound: Clip[];
   /** Incrustations : vidéos et images posées au-dessus de la piste principale. */
   overlay: Clip[];
   /** Titres. */
@@ -113,7 +122,7 @@ export const TEXT_DURATION = 3;
 export const MIN_CLIP = 0.1;
 
 export function emptyProject(): Project {
-  return { version: 2, name: 'Projet sans titre', width: 1920, height: 1080, fps: 30, media: [], video: [], audio: [], overlay: [], text: [] };
+  return { version: 2, name: 'Projet sans titre', width: 1920, height: 1080, fps: 30, media: [], video: [], audio: [], sound: [], overlay: [], text: [] };
 }
 
 export function defaultText(): TextStyle {

@@ -69,6 +69,13 @@ export function Updates() {
               <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Image précédente, suivante (avec <kbd>Maj</kbd> : dix images)</dd>
               <dt><kbd>Début</kbd> <kbd>Fin</kbd></dt><dd>Début, fin du montage</dd>
               <dt><kbd>S</kbd></dt><dd>Couper le clip en deux à la tête de lecture</dd>
+              <dt><kbd>Q</kbd> <kbd>W</kbd></dt><dd>Rogner le début, la fin du clip jusqu'à la tête de lecture</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> / <kbd>D</kbd></dt><dd>Copier, couper, coller, dupliquer un clip</dd>
+              <dt><kbd>Alt</kbd> + <kbd>F</kbd></dt><dd>Arrêt sur image à la tête de lecture</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>M</kbd></dt><dd>Couper ou rétablir le son du clip</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>D</kbd></dt><dd>Détacher le son du clip vidéo sur la piste Son</dd>
+              <dt>Poignées rondes dans les coins d'un clip</dt><dd>Fondu d'ouverture et de fermeture</dd>
+              <dt>Clic droit</dt><dd>Menu des actions d'un clip, d'une piste, d'un média</dd>
               <dt><kbd>Suppr</kbd></dt><dd>Supprimer la sélection</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></dt><dd>Annuler, rétablir</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Enregistrer (avec <kbd>Maj</kbd> : enregistrer sous)</dd>

@@ -9,6 +9,8 @@ import { deleteSelection, loadProject, newProject, openProject, saveProject, ser
 import { ExportDialog } from './ExportDialog';
 import { Updates } from './Updates';
 import { ClaudeLink } from './ClaudeLink';
+import { ContextMenu } from './ContextMenu';
+import { copyClip, detachSound, duplicateSelection, freezeFrame, pasteClip, toggleMute, trimToPlayhead } from './menus';
 import { connectControl } from './control';
 import { captureErrors, log } from './log';
 import { Icon } from './Icon';
@@ -101,6 +103,15 @@ export function App() {
       if (mod && k === 'y') { e.preventDefault(); st().redo(); return; }
       if (mod && k === 's') { e.preventDefault(); void saveProject(e.shiftKey); return; }
       if (mod && k === 'o') { e.preventDefault(); void openProject(); return; }
+      if (mod && !typing()) {
+        if (k === 'c') { e.preventDefault(); copyClip(); return; }
+        if (k === 'x') { e.preventDefault(); copyClip(true); return; }
+        if (k === 'v') { e.preventDefault(); pasteClip(); return; }
+        if (k === 'd' && !e.altKey) { e.preventDefault(); duplicateSelection(); return; }
+        if (k === 'm' && e.shiftKey) { e.preventDefault(); const s = st().sel; if (s?.kind === 'clip') toggleMute(s.id); return; }
+      }
+      if (e.altKey && k === 'f' && !typing()) { e.preventDefault(); freezeFrame(); return; }
+      if (mod && e.altKey && k === 'd' && !typing()) { e.preventDefault(); detachSound(); return; }
       if (typing() || mod) return;
       const active = document.activeElement as HTMLElement | null, onRange = (active as HTMLInputElement | null)?.type === 'range';
       if (e.code === 'Space') {
@@ -109,6 +120,8 @@ export function App() {
       }
       else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && onRange) return; // les flèches règlent le curseur ciblé
       else if (k === 's') splitAtPlayhead();
+      else if (k === 'q') trimToPlayhead('start');
+      else if (k === 'w') trimToPlayhead('end');
       else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection();
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); player.pause(); player.seek(player.t + (e.key === 'ArrowLeft' ? -1 : 1) / st().project.fps * (e.shiftKey ? 10 : 1)); }
       else if (e.key === 'Home') player.seek(0);
@@ -185,6 +198,7 @@ export function App() {
           onDrag={(d, start) => { if (start) drag.current = st().layout.tlH; setL({ tlH: clampN(drag.current - d, 150, Math.max(150, innerHeight - 260)) }); }} />
         <Timeline height={Math.min(L.tlH, Math.max(150, innerHeight - 260))} />
       </>}
+      <ContextMenu />
       <Updates />
       {linkOpen && <ClaudeLink onClose={() => setLinkOpen(false)} />}
       {exportOpen && <ExportDialog />}

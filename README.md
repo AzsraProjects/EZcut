@@ -9,7 +9,7 @@ Licence : [GPL-3.0](LICENSE). Composants tiers : [THIRD-PARTY.md](THIRD-PARTY.md
 ## Ce que fait EZcut
 
 - **Médias** : import par bouton ou glisser-déposer (vidéo, audio, image).
-- **Montage** sur quatre pistes — Titres, Par-dessus, Vidéo, Son : scinder, rogner, déplacer, réordonner, supprimer ; annuler et rétablir.
+- **Montage** sur cinq pistes — Titres, Par-dessus, Vidéo, Son, Musique : scinder, rogner, déplacer, copier, dupliquer, supprimer ; arrêt sur image ; son détachable de la vidéo ; fondus à la souris ; menu au clic droit ; annuler et rétablir.
 - **Titres** : 14 modèles animés, entièrement réglables.
 - **Incrustation** : vidéo ou image par-dessus la vidéo, avec opacité et mode de fusion ; déplacement et redimensionnement directement dans l'aperçu.
 - **Banque** : 71 effets, 21 filtres et 285 transitions, triés, avec aperçu au survol sur votre propre vidéo.

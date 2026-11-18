@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { emptyProject, type Project } from '../core/types';
+import type { MenuEntry } from './ContextMenu';
 
 export type Tab = 'media' | 'titles' | 'effects' | 'filters' | 'transitions';
 export type Selection = { kind: 'clip'; id: string } | { kind: 'transition'; id: string } | null;
@@ -31,6 +32,8 @@ interface State {
   exportOpen: boolean;
   /** Incrémenté quand les vignettes de la banque doivent être recalculées. */
   thumbEpoch: number;
+  /** Menu contextuel ouvert, ou null. */
+  menu: { x: number; y: number; items: MenuEntry[] } | null;
   /** Vignettes des médias (data URL), hors projet et hors annulation. */
   thumbs: Record<string, { poster?: string; strip?: string }>;
   setThumb(mediaId: string, t: { poster?: string; strip?: string }): void;
@@ -46,7 +49,7 @@ interface State {
   load(project: Project, path: string | null): void;
   saved(path: string): void;
   notify(msg: string, undoable?: boolean): void;
-  set(patch: Partial<Pick<State, 'pps' | 'catalogReady' | 'light' | 'toast' | 'playing' | 'exportOpen' | 'thumbEpoch'>>): void;
+  set(patch: Partial<Pick<State, 'pps' | 'catalogReady' | 'light' | 'toast' | 'playing' | 'exportOpen' | 'thumbEpoch' | 'menu'>>): void;
 }
 
 const LIMIT = 200;
@@ -60,7 +63,7 @@ export const useStore = create<State>((set, get) => ({
     try { localStorage.setItem('ezcut.layout', JSON.stringify(layout)); } catch { /* stockage indisponible : la disposition vaut pour cette session */ }
   },
   project: emptyProject(), past: [], future: [], sel: null, tab: 'media', filePath: null, dirty: false,
-  catalogReady: false, pps: 60, toast: null, toastUndo: false, light: false, playing: false, exportOpen: false, thumbEpoch: 0, thumbs: {},
+  catalogReady: false, pps: 60, toast: null, toastUndo: false, light: false, playing: false, exportOpen: false, thumbEpoch: 0, menu: null, thumbs: {},
   setThumb(mediaId, t) { set(s => ({ thumbs: { ...s.thumbs, [mediaId]: { ...s.thumbs[mediaId], ...t } } })); },
   apply(fn, record = true) {
     const { project, past } = get(), next = fn(project);

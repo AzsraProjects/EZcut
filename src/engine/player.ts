@@ -1,5 +1,5 @@
 /** Lecture et composition : calcule l'image du projet à un instant donné, pour l'aperçu, les vignettes et l'export. */
-import { activeAt, clipAt, fadeGain, projectDuration } from '../core/ops';
+import { activeAt, clipAt, fadeGain, imageGain, projectDuration } from '../core/ops';
 import { BLEND_MODES, emptyProject, type Clip, type Project } from '../core/types';
 import { catalog, type CatEffect, type CatItem } from '../effects/catalog';
 import { Engine, type EffectProgram, type Failed, type Target, type TransitionProgram } from './gl';
@@ -166,22 +166,24 @@ export class Player {
     const hit = clipAt(p.video, t);
     if (!hit) return null;
     const eps = 1 / p.fps, i = hit.index, c = hit.clip;
+    // Instant de la source pour un instant local du clip ; un arrêt sur image reste sur son image.
+    const src = (clip: Clip, local: number) => (clip.still ? clip.in : clip.in + local);
     const next = p.video[i + 1], prev = p.video[i - 1];
     if (c.transition && next) {
       const d = c.transition.dur, cut = hit.start + c.dur;
       if (t > cut - d / 2) return {
-        a: { clip: c, index: i, start: hit.start, time: c.in + Math.min(hit.local, c.dur - eps), live: true },
+        a: { clip: c, index: i, start: hit.start, time: src(c, Math.min(hit.local, c.dur - eps)), live: true },
         b: { clip: next, index: i + 1, start: cut, time: next.in, live: false }, k: (t - (cut - d / 2)) / d,
       };
     }
     if (prev?.transition) {
       const d = prev.transition.dur, cut = hit.start;
       if (t < cut + d / 2) return {
-        a: { clip: prev, index: i - 1, start: cut - prev.dur, time: prev.in + prev.dur - eps, live: false },
-        b: { clip: c, index: i, start: cut, time: c.in + hit.local, live: true }, k: (t - (cut - d / 2)) / d,
+        a: { clip: prev, index: i - 1, start: cut - prev.dur, time: src(prev, prev.dur - eps), live: false },
+        b: { clip: c, index: i, start: cut, time: src(c, hit.local), live: true }, k: (t - (cut - d / 2)) / d,
       };
     }
-    return { a: { clip: c, index: i, start: hit.start, time: c.in + Math.min(hit.local, c.dur), live: true } };
+    return { a: { clip: c, index: i, start: hit.start, time: src(c, Math.min(hit.local, c.dur)), live: true } };
   }
   /** Incrustations puis titres présents à l'instant t, du dessous vers le dessus. */
   private layersAt(p: Project, t: number): Layer[] {
@@ -198,8 +200,8 @@ export class Player {
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement;
       el.volume = clamp(w.clip.volume * fadeGain(w.clip, w.time - w.clip.in), 0, 1);
-      el.muted = this.muted || !w.live;
-      if (w.live && this.playing) {
+      el.muted = this.muted || !w.live || w.clip.still;
+      if (w.live && this.playing && !w.clip.still) {
         if (el.paused) { if (el.ended || Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time; el.play().catch(() => {}); }
         else if (this.jumped && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
       } else {
@@ -246,23 +248,23 @@ export class Player {
   }
 
   private syncAudio(p: Project, t: number) {
-    const hit = clipAt(p.audio, t), activeId = hit && t < hit.start + hit.clip.dur ? hit.clip.id : null;
-    if (hit && activeId) {
-      let a = this.audios.get(activeId);
-      const media = p.media.find(m => m.id === hit.clip.mediaId);
-      if (a && media && a.dataset.url !== media.url) { a.pause(); this.audios.delete(activeId); a = undefined; }
-      if (!a && media?.url) { a = new Audio(media.url); a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(activeId, a); }
-      if (a) {
-        const time = hit.clip.in + hit.local;
-        a.volume = clamp(hit.clip.volume * fadeGain(hit.clip, hit.local), 0, 1); a.muted = this.muted;
-        if (this.playing) { if (a.paused) { if (Math.abs(a.currentTime - time) > 0.05) a.currentTime = time; a.play().catch(() => {}); } else if (this.jumped || Math.abs(a.currentTime - time) > 1) a.currentTime = time; }
-        else if (!a.paused) a.pause();
-      }
+    const all = [...p.audio, ...p.sound], active = new Set<string>();
+    for (const clip of [...activeAt(p.audio, t), ...activeAt(p.sound, t)]) {
+      active.add(clip.id);
+      let a = this.audios.get(clip.id);
+      const media = p.media.find(m => m.id === clip.mediaId);
+      if (a && media && a.dataset.url !== media.url) { a.pause(); this.audios.delete(clip.id); a = undefined; }
+      if (!a && media?.url) { a = new Audio(media.url); a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(clip.id, a); }
+      if (!a) continue;
+      const local = t - clip.start, time = clip.in + local;
+      a.volume = clamp(clip.volume * fadeGain(clip, local), 0, 1); a.muted = this.muted;
+      if (this.playing) { if (a.paused) { if (Math.abs(a.currentTime - time) > 0.05) a.currentTime = time; a.play().catch(() => {}); } else if (this.jumped || Math.abs(a.currentTime - time) > 0.5) a.currentTime = time; }
+      else if (!a.paused) a.pause();
     }
-    const ids = new Set(p.audio.map(c => c.id));
+    const ids = new Set(all.map(c => c.id));
     for (const [id, a] of this.audios) {
       if (!ids.has(id)) { a.pause(); a.removeAttribute('src'); this.audios.delete(id); }
-      else if (id !== activeId && !a.paused) a.pause();
+      else if (!active.has(id) && !a.paused) a.pause();
     }
   }
 
@@ -291,7 +293,12 @@ export class Player {
     this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform);
     const ch = this.chainFor(clip, key);
     if (extra) ch.push(extra);
-    this.runChain(set.fit.tex, ch, w, h, out, set, time, clip.dur > 0 ? clamp(time / clip.dur, 0, 1) : 0);
+    const g = imageGain(clip, time), progress = clip.dur > 0 ? clamp(time / clip.dur, 0, 1) : 0;
+    if (g >= 1) { this.runChain(set.fit.tex, ch, w, h, out, set, time, progress); return; }
+    // Fondu de l'image : le clip, effets compris, est assombri vers le noir.
+    if (!ch.length) { this.engine.blit(set.fit.tex, w, h, out, g); return; }
+    this.runChain(set.fit.tex, ch, w, h, set.acc[1], set, time, progress);
+    this.engine.blit(set.acc[1].tex, w, h, out, g);
   }
   /** Piste principale. Chaque clip reçoit son temps local : un effet animé redémarre au début de chaque clip. */
   private composeMain(f: Frame | null, w: number, h: number, out: Target | null, set: TargetSet, key: string, t: number, extra?: ChainItem) {
@@ -333,7 +340,7 @@ export class Player {
     visible.forEach((l, i) => {
       const dst = i === visible.length - 1 ? out : base === set.acc[0] ? set.acc[1] : set.acc[0];
       const clip = l.clip;
-      let top = set.fit.tex, opacity = clip.opacity;
+      let top = set.fit.tex, opacity = clip.opacity * imageGain(clip, l.local);
       if (clip.text) {
         const a = animState(clip.text, l.local, clip.dur);
         opacity *= a.alpha;
@@ -441,7 +448,7 @@ export class Player {
       const f0 = this.frameAt(p, this.t), live = f0 ? (f0.b?.live ? f0.b : f0.a) : null, s = live ? this.sources.get(live.clip.id) : null;
       // La vidéo ne sert d'horloge que tant qu'on est avant la fin de son clip, et seulement si elle est lisible :
       // au-delà (musique ou titre plus long que l'image) ou sur un fichier illisible, l'horloge du système prend le relais.
-      if (live && s?.kind === 'video' && this.t < live.start + live.clip.dur - 1e-6) {
+      if (live && s?.kind === 'video' && !live.clip.still && this.t < live.start + live.clip.dur - 1e-6) {
         const el = s.el as HTMLVideoElement, end = live.start + live.clip.dur;
         if (el.error || el.networkState === el.NETWORK_NO_SOURCE) this.t += dt;
         else if (el.ended) this.t = end;

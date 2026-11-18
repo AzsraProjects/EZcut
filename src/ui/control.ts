@@ -1,7 +1,7 @@
 /** Lien de pilotage, côté interface : exécute les commandes envoyées par un assistant (voir electron/control.cjs et tools/mcp).
  *  Chaque commande passe par les mêmes opérations que les gestes de l'utilisateur, donc reste annulable par Ctrl+Z,
  *  et le projet qui en résulte est revalidé comme un fichier venu de l'extérieur. */
-import { addFx, addOverlay, addText, appendClip, findClip, moveClip, moveFree, patchClip, projectDuration, removeClip, removeFx, setTransition, spanWhole, splitAt, startsOf, TRACKS, trimClip } from '../core/ops';
+import { addFx, addOverlay, addSound, addText, appendClip, detachAudio, findClip, moveClip, moveFree, patchClip, projectDuration, removeClip, removeFx, setTransition, spanWhole, splitAt, startsOf, TRACKS, trimClip } from '../core/ops';
 import { parseProject } from '../core/project';
 import { defaultText, type Clip, type Project, type TrackId } from '../core/types';
 import { ez, type ControlRequest, type ImportedFile } from '../desktop/api';
@@ -42,6 +42,8 @@ function describeClip(p: Project, track: TrackId, c: Clip, start: number) {
     ...(c.fx.length ? { effects: c.fx.map(f => ({ uid: f.uid, effectId: f.effectId, on: f.on, params: f.params })) } : {}),
     ...(c.transition ? { transition: { effectId: c.transition.effectId, duration: c.transition.dur } } : {}),
     ...(c.volume !== 1 || c.fadeIn || c.fadeOut ? { volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut } : {}),
+    ...(c.vfadeIn || c.vfadeOut ? { vfadeIn: c.vfadeIn, vfadeOut: c.vfadeOut } : {}),
+    ...(c.still ? { still: true } : {}),
     ...(c.opacity !== 1 || c.blend !== 'normal' ? { opacity: c.opacity, blend: c.blend } : {}),
     ...(c.transform.scale !== 1 || c.transform.x || c.transform.y || c.transform.rot ? { transform: c.transform } : {}),
     ...(Object.keys(c.color).length ? { color: c.color } : {}),
@@ -54,7 +56,7 @@ function status() {
     playhead: +player.t.toFixed(3), playing: player.playing, selection: st.sel,
     media: p.media.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, hasAudio: m.hasAudio, path: m.path, missing: !m.url })),
     tracks: Object.fromEntries(TRACKS.map(t => { const s = startsOf(p, t); return [t, p[t].map((c, i) => describeClip(p, t, c, s[i]))]; })),
-    notes: 'Pistes : video (principale, clips à la suite, transitions) ; overlay (par-dessus, position libre) ; text (titres, position libre) ; audio (musique, à la suite). Temps en secondes. Positions : fraction du cadre, x vers la droite, y vers le haut, 0 = centre.',
+    notes: 'Pistes : video (principale, clips à la suite, transitions) ; overlay (par-dessus), text (titres), sound (son détaché, voix, bruitages) et audio (musique) sont libres : chaque clip a sa position. Temps en secondes. Positions : fraction du cadre, x vers la droite, y vers le haut, 0 = centre.',
   };
 }
 
@@ -135,8 +137,8 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
   newProject: async () => { await newProject(); return status(); },
 
   addClip: p => {
-    const project = S().project, mediaId = str(p.mediaId, 'mediaId'), track = p.track === 'overlay' ? 'overlay' : 'main';
-    const r = (track === 'overlay' ? addOverlay(project, mediaId, optNum(p.at, 'at') ?? player.t) : appendClip(project, mediaId, optNum(p.index, 'index'))) ?? fail('Média introuvable, ou type de média incompatible avec cette piste.');
+    const project = S().project, mediaId = str(p.mediaId, 'mediaId'), at = optNum(p.at, 'at') ?? player.t;
+    const r = (p.track === 'overlay' ? addOverlay(project, mediaId, at) : p.track === 'sound' || (p.track === 'music' && p.at !== undefined) ? addSound(project, mediaId, p.track === 'sound' ? 'sound' : 'audio', at) : appendClip(project, mediaId, optNum(p.index, 'index'))) ?? fail('Média introuvable, ou type de média incompatible avec cette piste.');
     const f = findClip(commit(r.project), r.clipId);
     return f ? describeClip(S().project, f.track, f.clip, f.start) : {};
   },
@@ -160,7 +162,7 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     if (p.index !== undefined) next = moveClip(next, id, num(p.index, 'index'));
     if (p.wholeVideo === true) next = spanWhole(next, id);
     next = patchClip(next, id, c => {
-      for (const k of ['volume', 'fadeIn', 'fadeOut', 'opacity'] as const) if (p[k] !== undefined) c[k] = num(p[k], k);
+      for (const k of ['volume', 'fadeIn', 'fadeOut', 'vfadeIn', 'vfadeOut', 'opacity'] as const) if (p[k] !== undefined) c[k] = num(p[k], k);
       if (typeof p.blend === 'string') c.blend = p.blend as Clip['blend'];
       if (isObj(p.transform)) Object.assign(c.transform, p.transform);
       if (isObj(p.color)) Object.assign(c.color, p.color);
@@ -176,6 +178,11 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     return status().tracks[track];
   },
   removeClip: p => { commit(removeClip(S().project, clipOf(p.clipId).clip.id)); return {}; },
+  detachAudio: p => {
+    const r = detachAudio(S().project, clipOf(p.clipId).clip.id) ?? fail('Impossible de détacher : ce clip n\'a pas de son, ou la piste sound est déjà occupée à cet endroit.');
+    const f = findClip(commit(r.project), r.clipId);
+    return f ? describeClip(S().project, f.track, f.clip, f.start) : {};
+  },
   applyEffect: p => {
     const f = clipOf(p.clipId), it = itemOf(p.effectId, ['effect', 'filter']) as CatEffect;
     if (f.clip.text || f.track === 'audio') fail('Les effets s\'appliquent aux vidéos et aux images.');
