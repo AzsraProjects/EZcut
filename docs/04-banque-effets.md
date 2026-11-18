@@ -2,18 +2,34 @@
 
 Objectif : l'utilisateur ouvre un panneau, parcourt des effets, filtres et transitions créés par la communauté, et voit le rendu sur sa propre vidéo simplement en passant la souris dessus.
 
+## Effets, filtres, transitions
+
+La banque distingue trois familles, chacune dans son onglet :
+
+| Famille | Ce que c'est | Exemples |
+|---|---|---|
+| **Effet** | Anime, déforme ou stylise l'image | Tremblement, zoom, glitch, flou, miroir, VHS |
+| **Filtre** | Change les couleurs et l'ambiance, sans toucher à la forme | Noir et blanc, sépia, vignette, bleach bypass |
+| **Transition** | Relie deux clips | Fondu, volet, zoom croisé |
+
+Techniquement, effets et filtres sont le même objet (un shader appliqué à un clip). Le classement se fait à la construction du catalogue, d'après les catégories déclarées par chaque shader : couleur seule → filtre, tout le reste → effet.
+
+La collection ouverte contient peu d'effets de mouvement prêts à l'emploi (un tremblement, deux zooms). Les variantes attendues d'un éditeur grand public — plusieurs types de tremblement, zooms animés, à-coups — seront des effets écrits pour EZcut, au même format.
+
 ## Ce qui existe en open source
 
 Oui, il existe des banques ouvertes. Aucune n'est « prête à brancher » dans un éditeur, mais plusieurs sont directement exploitables.
 
-> Les licences ci-dessous sont indiquées de mémoire. À revérifier à la source avant toute intégration.
+> gl-transitions et ISF-Files ont été vérifiés à la source et testés le 2026-11-18 ([résultats](maquettes/README.md)). Les licences des autres sources sont indiquées de mémoire et restent à revérifier avant intégration.
 
 ### Directement compatibles avec le moteur proposé (shaders GLSL)
 
 | Source | Contenu | Licence | Usage dans EZcut |
 |---|---|---|---|
-| **gl-transitions** | Une centaine de transitions, chacune un petit shader avec paramètres déclarés | MIT | Base du catalogue de transitions |
-| **ISF (Interactive Shader Format)** | Plusieurs centaines d'effets et générateurs : glitch, flous, distorsions, stylisations. Format standardisé qui décrit les paramètres de chaque effet | MIT pour la collection de référence | Base du catalogue d'effets ; le format sert aussi de modèle pour nos packs |
+| **gl-transitions** | 300 transitions, chacune un petit shader avec paramètres déclarés. 297 utilisables telles quelles, toutes compilent | MIT (295), BSD (2) | Base du catalogue de transitions |
+| **ISF-Files (Interactive Shader Format)** | 148 effets applicables à une vidéo (glitch, flous, distorsions, stylisations), plus 120 générateurs. 146 compilent, 126 retenus. Format standardisé qui décrit les paramètres de chaque effet | MIT | Base du catalogue d'effets ; le format sert aussi de modèle pour nos packs |
+
+Ces deux collections sont de qualité inégale : certaines entrées sont des démonstrations techniques plus que des effets de montage. Le catalogue livré avec EZcut sera une **sélection** triée et réglée (valeurs par défaut, noms, catégories), pas la collection brute.
 | **LUT au format `.cube`** | Looks colorimétriques ; nombreux packs gratuits | Variable selon le pack | Catalogue de looks ; seuls les packs à licence claire entrent dans le registre |
 
 ### Exploitables avec précautions
