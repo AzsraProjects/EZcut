@@ -1,5 +1,5 @@
 /** Lecture et composition : calcule l'image du projet à un instant donné, pour l'aperçu, les vignettes et l'export. */
-import { activeAt, clipAt, fadeGain, imageGain, projectDuration } from '../core/ops';
+import { activeAt, clipAt, clipsOf, clipsOfKind, fadeGain, imageGain, isImage, isSound, projectDuration, tracksOfKind } from '../core/ops';
 import { BLEND_MODES, emptyProject, type Clip, type Project } from '../core/types';
 import { catalog, type CatEffect, type CatItem } from '../effects/catalog';
 import { Engine, type EffectProgram, type Failed, type Target, type TransitionProgram } from './gl';
@@ -17,8 +17,8 @@ interface TargetSet { fit: Target; ping: [Target, Target]; ra: Target; rb: Targe
 interface ChainItem { p: EffectProgram; params: Record<string, unknown>; key: string; }
 /** Image de la piste principale : un clip, ou deux pendant une transition (k = avancement). */
 interface Frame { a: Want; b?: Want; k?: number; }
-/** Couche au-dessus de la piste principale : incrustation ou titre. */
-interface Layer { clip: Clip; local: number; }
+/** Couche au-dessus de la piste principale : incrustation ou titre, avec sa piste. */
+interface Layer { clip: Clip; local: number; track: string; }
 interface TextCache { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; tex: WebGLTexture; key: string; w: number; h: number; }
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
@@ -201,9 +201,11 @@ export class Player {
     }
     return { a: { clip: c, index: i, start: hit.start, time: src(c, Math.min(hit.local, c.dur)), live: true } };
   }
-  /** Incrustations puis titres présents à l'instant t, du dessous vers le dessus. */
+  /** Incrustations et titres présents à l'instant t, du dessous vers le dessus : de la piste d'image la plus basse
+   *  (juste au-dessus de la piste principale) à la plus haute. Les pistes masquées sont ignorées. */
   private layersAt(p: Project, t: number): Layer[] {
-    return [...(p.tracks.overlay?.hidden ? [] : activeAt(p.overlay, t)), ...(p.tracks.text?.hidden ? [] : activeAt(p.text, t))].filter(clip => !clip.off).map(clip => ({ clip, local: t - clip.start }));
+    return p.order.filter(isImage).reverse().filter(track => !p.tracks[track]?.hidden)
+      .flatMap(track => activeAt(clipsOf(p, track), t).filter(clip => !clip.off).map(clip => ({ clip, local: t - clip.start, track })));
   }
 
   private syncVideo(p: Project, f: Frame | null, layers: Layer[], t: number) {
@@ -237,7 +239,7 @@ export class Player {
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement, time = l.clip.in + l.local, off = Math.abs(el.currentTime - time);
       el.volume = clamp(l.clip.volume * fadeGain(l.clip, l.local), 0, 1);
-      el.muted = this.muted || !!p.tracks.overlay?.muted;
+      el.muted = this.muted || !!p.tracks[l.track]?.muted; // le son d'une incrustation suit l'état de sa propre piste
       if (this.playing) {
         if (el.paused) { if (el.ended || off > 0.05) el.currentTime = time; el.play().catch(() => {}); }
         else if (off > (this.jumped ? 0.05 : 0.3)) el.currentTime = time;
@@ -257,7 +259,7 @@ export class Player {
       if (s?.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); if (!el.seeking && Math.abs(el.currentTime - clip.in) > 0.02) el.currentTime = clip.in; }
     };
     if (cur >= 0 && p.video[cur + 1]) prime(p.video[cur + 1]);
-    for (const c of p.overlay) if (c.start > t && c.start - t < 2) prime(c);
+    for (const track of tracksOfKind(p, 'overlay')) if (!p.tracks[track]?.hidden) for (const c of clipsOf(p, track)) if (c.start > t && c.start - t < 2) prime(c);
     if (cur >= 0) for (const i of [cur - 1, cur - 2, cur + 2]) if (p.video[i]) near.add(p.video[i].id);
     if (this.targetClipId) near.add(this.targetClipId);
     for (const [id, s] of this.sources) {
@@ -270,10 +272,11 @@ export class Player {
     // Un lecteur par fichier et par piste, partagé par les clips qui en sont tirés : de part et d'autre d'une coupe,
     // le son continue sans interruption ni reprise.
     const wanted = new Set<string>(), active = new Set<string>();
-    for (const track of ['audio', 'sound'] as const) {
-      for (const c of p[track]) wanted.add(track + '|' + c.mediaId);
+    for (const track of p.order.filter(isSound)) {
+      const list = clipsOf(p, track);
+      for (const c of list) wanted.add(track + '|' + c.mediaId);
       if (p.tracks[track]?.muted) continue;
-      for (const clip of activeAt(p[track], t)) {
+      for (const clip of activeAt(list, t)) {
         if (clip.off) continue;
         const key = track + '|' + clip.mediaId, media = p.media.find(m => m.id === clip.mediaId);
         let a = this.audios.get(key);
@@ -406,7 +409,7 @@ export class Player {
       return into.tex;
     };
     // Une incrustation sélectionnée sert de modèle pour les aperçus d'effets.
-    const over = p.overlay.find(c => c.id === this.targetClipId);
+    const over = clipsOfKind(p, 'overlay').find(c => c.id === this.targetClipId);
     return [fit(over ?? p.video[i], this.sample!.a, set.ra), fit(i >= 0 ? p.video[i + 1] : undefined, this.sample!.b, set.rb)];
   }
   private previewParams(e: CatEffect) { return e.preview ?? {}; }
@@ -518,8 +521,8 @@ export class Player {
 
   /** Libère les tampons des effets et les textures des titres retirés du projet. */
   private collect() {
-    const p = this.getProject(), alive = new Set<string>(), texts = new Set(p.text.map(c => c.id));
-    for (const c of [...p.video, ...p.overlay]) { alive.add('col' + c.id); for (const f of c.fx) alive.add(f.uid); }
+    const p = this.getProject(), alive = new Set<string>(), texts = new Set(clipsOfKind(p, 'text').map(c => c.id));
+    for (const c of [...p.video, ...clipsOfKind(p, 'overlay')]) { alive.add('col' + c.id); for (const f of c.fx) alive.add(f.uid); }
     for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect')
       for (const k of Object.keys(pr.state)) if (k.startsWith('v') && !alive.has(k.slice(1, k.lastIndexOf(':')))) this.engine.releaseState(pr, k);
     for (const id of [...this.texts.keys()]) if (!texts.has(id)) this.dropText(id);

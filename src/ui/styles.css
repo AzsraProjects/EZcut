@@ -298,6 +298,14 @@ input.sel.text{grid-column:2/4;width:100%;user-select:text}
 .th.r{z-index:3}
 .ruler{z-index:4}
 .heads{z-index:8}
+/* Pistes ajoutées et déplacées : l'en-tête d'une piste libre se saisit pour changer de rang. */
+/* Le numéro d'une piste ajoutée reste lisible quand son nom est abrégé. */
+.th .tlabel{display:flex;gap:4px}
+.th .tlabel span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.th .tlabel b{flex:none;font-weight:600;color:var(--fg)}
+.th.movable{cursor:grab;touch-action:none}
+.th.drag{cursor:grabbing;background:var(--accent-soft);color:var(--fg)}
+.tools .addtrack{margin-left:2px}
 /* Défilement horizontal de la timeline : toujours visible, large, contrasté. */
 .tscroll{overflow-x:scroll}
 .tscroll::-webkit-scrollbar{height:15px;width:12px}

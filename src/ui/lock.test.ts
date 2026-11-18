@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { addMedia, appendClip, patchClip, removeMedia, setTrack } from '../core/ops';
-import { emptyProject, type Media } from '../core/types';
+import { addMedia, addText, addTrack, appendClip, clipsOf, moveToTrack, moveTrack, patchClip, removeMedia, removeTrack, setTrack } from '../core/ops';
+import { defaultText, emptyProject, type Media } from '../core/types';
 import { useStore } from './store';
 
 const media = (id: string): Media => ({ id, path: `C:/v/${id}`, url: `ezmedia://local/${id}`, name: id, kind: 'video', duration: 6, width: 1920, height: 1080, hasAudio: true });
@@ -24,6 +24,24 @@ describe('piste verrouillée', () => {
     st().apply(p => setTrack(p, 'video', { locked: false }));
     st().apply(p => patchClip(p, id, c => { c.volume = 0.2; }));
     expect(st().project.video[0].volume).toBe(0.2);
+  });
+  it('vaut aussi pour une piste ajoutée : ni modifiée, ni supprimée, ni destination d\'un clip', () => {
+    st().apply(p => addTrack(p, 'text')!.project);
+    st().apply(p => addText(p, defaultText(), 0, undefined, 'text-2').project);
+    st().apply(p => addText(p, defaultText(), 0).project);
+    const other = st().project.text[0].id;
+    st().apply(p => setTrack(p, 'text-2', { locked: true }));
+    const locked = st().project;
+    st().apply(p => removeTrack(p, 'text-2'));
+    st().apply(p => moveToTrack(p, other, 'text-2'));
+    expect(st().project).toBe(locked);
+    st().apply(p => moveTrack(p, 'text-2', 1)); // changer de rang ne touche pas à ses clips
+    expect(st().project.order.slice(0, 2)).toEqual(['text', 'text-2']);
+    st().apply(p => setTrack(p, 'text-2', { locked: false }));
+    st().apply(p => moveToTrack(p, other, 'text-2'));
+    expect(clipsOf(st().project, 'text-2')).toHaveLength(2);
+    st().apply(p => removeTrack(p, 'text-2'));
+    expect(st().project.order).not.toContain('text-2');
   });
   it('ne laisse pas sélectionner un de ses clips, ni en garder un après une annulation', () => {
     const id = st().project.video[0].id;

@@ -1,7 +1,7 @@
 /** Actions de l'interface : relient les gestes de l'utilisateur aux opérations de core. */
-import { addFx, addMarker, addOverlay, addText, appendClip, clipAt, findClip, isFree, projectDuration, removeClip, rippleRemove, setTrack, setTransition, splitAll, splitAt, startsOf, TRACKS, trackStarts } from '../core/ops';
+import { addFx, addMarker, addOverlay, addText, addTrack, appendClip, clipAt, clipsOf, findClip, hasTrack, isBase, isFree, kindOf, moveToTrack, moveTrack, projectDuration, removeClip, removeTrack, rippleRemove, setTrack, setTransition, splitAll, splitAt, startsOf, trackStarts } from '../core/ops';
 import { parseProject } from '../core/project';
-import { emptyProject, type Project, type TextStyle, type TrackId, type TrackState, type Transform } from '../core/types';
+import { emptyProject, MAX_EXTRA_TRACKS, type Project, type TextStyle, type TrackId, type TrackKind, type TrackState, type Transform } from '../core/types';
 import { ez } from '../desktop/api';
 import { catalog, defaultsOf, transitionDefaults, type CatItem } from '../effects/catalog';
 import { player } from '../engine/player';
@@ -11,6 +11,13 @@ import { useStore } from './store';
 import { timecode } from './time';
 
 const S = () => useStore.getState();
+
+const KIND_LABELS: Record<TrackKind, string> = { video: 'Vidéo', overlay: 'Par-dessus', text: 'Titres', sound: 'Son', audio: 'Musique' };
+/** Nom affiché d'une piste : le libellé de son genre, suivi de son numéro pour une piste ajoutée (« Titres 2 »). */
+export function trackLabel(track: TrackId): string {
+  const kind = kindOf(track), n = track.slice(kind.length + 1);
+  return (KIND_LABELS[kind] ?? track) + (n ? ' ' + n : '');
+}
 
 /** Vrai si la piste est verrouillée ; prévient alors l'utilisateur, sauf si quiet. */
 export function isLocked(track: TrackId, quiet = false): boolean {
@@ -22,7 +29,7 @@ export function isLocked(track: TrackId, quiet = false): boolean {
 /** Clip qui reçoit un effet : le clip vidéo ou l'incrustation sélectionné, sinon le clip principal sous la tête de lecture. */
 export function targetFxClip(): string | null {
   const { project: p, sel } = S();
-  if (sel?.kind === 'clip') { const f = findClip(p, sel.id); if (f && (f.track === 'video' || f.track === 'overlay')) return sel.id; }
+  if (sel?.kind === 'clip') { const f = findClip(p, sel.id); if (f && (f.track === 'video' || kindOf(f.track) === 'overlay')) return sel.id; }
   return clipAt(p.video, player.t)?.clip.id ?? null;
 }
 
@@ -128,7 +135,7 @@ export function addMarkerAtPlayhead() {
 /** Bords de tous les clips, toutes pistes confondues, triés. */
 function cutPoints(p: Project): number[] {
   const pts = new Set<number>([0, projectDuration(p)]);
-  for (const tr of TRACKS) { const s = startsOf(p, tr); p[tr].forEach((c, i) => { pts.add(s[i]); pts.add(s[i] + c.dur); }); }
+  for (const tr of p.order) { const s = startsOf(p, tr); clipsOf(p, tr).forEach((c, i) => { pts.add(s[i]); pts.add(s[i] + c.dur); }); }
   return [...pts].sort((a, b) => a - b);
 }
 const jumpTo = (pts: number[], dir: -1 | 1) => {
@@ -157,6 +164,40 @@ export function toggleTrack(track: TrackId, key: keyof TrackState) {
   const st = S(), on = !st.project.tracks[track]?.[key];
   st.apply(p => setTrack(p, track, { [key]: on }));
   if (key === 'locked' && on && st.sel && findClip(st.project, st.sel.id)?.track === track) st.select(null);
+}
+
+/** Rend à une piste sa hauteur par défaut. */
+export function resetLaneHeight(track: TrackId) {
+  const next = { ...S().layout.laneH };
+  if (!(track in next)) return;
+  delete next[track]; S().setLayout({ laneH: next });
+}
+/** Ajoute une piste du genre voulu. */
+export function addTrackOfKind(kind: TrackKind) {
+  const st = S(), r = addTrack(st.project, kind);
+  if (!r) { st.notify(`Un projet accepte ${MAX_EXTRA_TRACKS} pistes ajoutées au plus : supprimez-en une pour en créer une autre.`); return; }
+  resetLaneHeight(r.id); // un identifiant réutilisé ne reprend pas la hauteur d'une piste supprimée
+  st.apply(() => r.project);
+  st.notify(`Piste « ${trackLabel(r.id)} » ajoutée. Tirez son en-tête vers le haut ou le bas pour la déplacer.`, true);
+}
+/** Supprime une piste ajoutée, avec ses clips. Refusé sur une piste verrouillée. */
+export function deleteTrack(track: TrackId) {
+  const st = S(), p = st.project;
+  if (isBase(track) || !hasTrack(p, track)) return;
+  if (p.tracks[track]?.locked) { st.notify(`La piste « ${trackLabel(track)} » est verrouillée : déverrouillez-la avant de la supprimer.`); return; }
+  const n = clipsOf(p, track).length;
+  st.apply(q => removeTrack(q, track));
+  st.select(S().sel); // un clip sélectionné sur cette piste n'existe plus
+  st.notify(`Piste « ${trackLabel(track)} » supprimée${n ? ` avec ${n > 1 ? `ses ${n} clips` : 'son clip'}` : ''}.`, true);
+}
+/** Monte (delta négatif) ou descend une piste parmi les pistes d'image ou de son. */
+export function shiftTrack(track: TrackId, delta: number) { S().apply(p => moveTrack(p, track, delta)); }
+/** Envoie un clip sur une autre piste du même genre. */
+export function sendClipToTrack(clipId: string, track: TrackId) {
+  const f = findClip(S().project, clipId);
+  if (!f || isLocked(f.track) || isLocked(track)) return;
+  S().apply(p => moveToTrack(p, clipId, track));
+  S().select({ kind: 'clip', id: clipId });
 }
 
 let capturing = false;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { findClip, patchClip, projectDuration } from '../core/ops';
+import { findClip, isSound, patchClip, projectDuration } from '../core/ops';
 import { player, type PreviewQuality } from '../engine/player';
 import { jumpCut, snapshot } from './actions';
 import { Icon } from './Icon';
@@ -29,10 +29,10 @@ export function Viewer() {
     return () => { ro.disconnect(); removeEventListener('resize', measure); };
   }, [aspect]);
   const [quality, setQuality] = useState<PreviewQuality>('auto');
-  const movable = useStore(s => { const f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return !!f && f.track !== 'audio'; });
+  const movable = useStore(s => { const f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return !!f && !isSound(f.track); });
 
   // Dans l'aperçu, le clip sélectionné se déplace à la souris et se redimensionne à la molette.
-  const target = () => { const s = useStore.getState(), f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return f && f.track !== 'audio' ? f.clip : null; };
+  const target = () => { const s = useStore.getState(), f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return f && !isSound(f.track) ? f.clip : null; };
   const drag = (e: React.PointerEvent) => {
     const clip = target(), el = e.currentTarget as HTMLElement;
     if (!clip || e.button !== 0) return;

@@ -33,6 +33,7 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Outil lame (touche C) : chaque clic sur un clip le coupe à cet endroit. Sans sélection, couper à la tête de lecture coupe toutes les pistes.
 - Aimantation : un clip qu'on déplace ou qu'on rogne s'accroche aux coupes, aux repères et à la tête de lecture, avec une ligne-guide (touche N ; Alt la suspend).
 - Pistes : couper le son d'une piste entière, la masquer, la verrouiller, depuis son en-tête.
+- Ajouter des pistes (bouton « + Piste » : titres, par-dessus, son, musique) et les déplacer en tirant leur en-tête ou par clic droit : plusieurs titres et plusieurs images peuvent être à l'écran en même temps, la piste la plus haute passant devant. Un clip change de piste en le faisant glisser vers une piste du même genre.
 - Refermer un vide sur une piste (clic droit dans le vide), ou supprimer un clip en refermant le vide (Maj + Suppr).
 - Transitions : tirer un bord pour changer la durée ; « Appliquer à toutes les coupes » d'un clic.
 - Retournement horizontal et vertical, et quart de tour, dans l'inspecteur.
@@ -53,7 +54,6 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 
 - Une transition fige la dernière image du premier clip et la première du second pendant qu'elle se joue, au lieu de faire se chevaucher les deux clips.
 - Un effet posé sur une incrustation en change les couleurs mais pas la forme : un tremblement ou un zoom n'y déplace pas le cadre.
-- Une seule piste de titres et une seule piste d'incrustation : deux titres ne peuvent pas être affichés en même temps.
 - Pas d'images clés : un réglage vaut pour toute la durée du clip.
 - Pas de réglage de vitesse ni d'inversion.
 - Les réglages des effets et transitions d'origine communautaire portent leur nom anglais.

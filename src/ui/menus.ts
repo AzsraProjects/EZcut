@@ -1,9 +1,9 @@
 /** Menus du clic droit et actions du presse-papiers. Chaque entrée appelle une opération de montage déjà annulable. */
-import { addMarker, addSound, clipAt, closeGap, detachAudio, gapAt, insertAt, duplicateClip, findClip, isSound, freezeAt, insertCopy, isFree, patchClip, removeClip, removeMarker, removeMedia, setTransition, spanWhole, startsOf, transitionEverywhere, trimClip } from '../core/ops';
-import type { Clip, FxInstance, Params, TrackId } from '../core/types';
+import { addMarker, addSound, clipAt, clipCount, clipsOf, closeGap, detachAudio, gapAt, hasTrack, insertAt, duplicateClip, findClip, isBase, isSound, freezeAt, insertCopy, isFree, kindOf, moveTrack, patchClip, removeClip, removeMarker, removeMedia, setTransition, spanWhole, startsOf, tracksOfKind, transitionEverywhere, trimClip } from '../core/ops';
+import { MAX_EXTRA_TRACKS, type Clip, type FxInstance, type Params, type TrackId, type TrackKind } from '../core/types';
 import { ez } from '../desktop/api';
 import { player } from '../engine/player';
-import { addToTimeline, deleteSelection, isLocked, selectClip, splitAtPlayhead } from './actions';
+import { addToTimeline, addTrackOfKind, deleteSelection, deleteTrack, isLocked, resetLaneHeight, selectClip, sendClipToTrack, shiftTrack, splitAtPlayhead, trackLabel } from './actions';
 import { replaceMediaFile } from './media';
 import type { MenuEntry } from './ContextMenu';
 import { useStore } from './store';
@@ -22,14 +22,17 @@ export function copyClip(cut = false) {
   if (cut) { S().apply(p => removeClip(p, f.clip.id)); S().select(null); }
   S().notify(cut ? 'Clip coupé.' : 'Clip copié.');
 }
-/** Colle le clip copié : après le clip sélectionné (ou en fin) sur une piste magnétique, à la tête de lecture sur une piste libre. */
-export function pasteClip(at?: number) {
+/** Colle le clip copié : après le clip sélectionné (ou en fin) sur une piste magnétique, à la tête de lecture sur une piste libre.
+ *  Il retourne sur sa piste d'origine, ou sur la piste donnée si elle est du même genre. */
+export function pasteClip(at?: number, onto?: TrackId) {
   if (!clipboard) { S().notify('Rien à coller : copiez d\'abord un clip.'); return; }
-  const st = S(), p = st.project, { clip, track } = clipboard;
+  const st = S(), p = st.project, { clip } = clipboard, from = clipboard.track;
+  // La piste d'origine a pu être supprimée entre-temps : le clip va alors sur la piste de base de son genre.
+  const track = onto && kindOf(onto) === kindOf(from) && hasTrack(p, onto) ? onto : hasTrack(p, from) ? from : kindOf(from);
   if (clip.mediaId && !p.media.some(m => m.id === clip.mediaId)) { st.notify('Le média de ce clip n\'est plus dans la bibliothèque.'); return; }
   if (isLocked(track)) return;
   const sel = selectedClip();
-  const index = sel && sel.track === track ? sel.index + 1 : (at !== undefined ? p[track].filter((c, i) => startsOf(p, track)[i] + c.dur / 2 < at).length : p[track].length);
+  const index = sel && sel.track === track ? sel.index + 1 : (at !== undefined ? clipsOf(p, track).filter((c, i) => startsOf(p, track)[i] + c.dur / 2 < at).length : clipsOf(p, track).length);
   const r = insertCopy(p, track, clip, { index, start: at ?? player.t });
   st.apply(() => r.project); selectClip(r.clipId);
 }
@@ -89,7 +92,7 @@ function clipMenu(id: string): MenuEntry[] {
   const st = S(), f = findClip(st.project, id);
   if (!f) return [];
   const c = f.clip, media = st.project.media.find(m => m.id === c.mediaId), track = f.track;
-  const visual = track === 'video' || track === 'overlay', hasSound = isSound(track) || (!!media?.hasAudio && media.kind !== 'image' && !c.still);
+  const visual = track === 'video' || kindOf(track) === 'overlay', hasSound = isSound(track) || (!!media?.hasAudio && media.kind !== 'image' && !c.still);
   const inside = player.t > f.start + 0.02 && player.t < f.start + c.dur - 0.02;
   const flip = (key: 'flipH' | 'flipV') => S().apply(p => patchClip(p, id, x => { if (x.transform[key]) delete x.transform[key]; else x.transform[key] = true; }));
   return [
@@ -104,6 +107,8 @@ function clipMenu(id: string): MenuEntry[] {
     { label: 'Rogner le début jusqu\'à la tête de lecture', shortcut: 'Alt+[', disabled: !inside, action: () => trimToPlayhead('start') },
     { label: 'Rogner la fin jusqu\'à la tête de lecture', shortcut: 'Alt+]', disabled: !inside, action: () => trimToPlayhead('end') },
     track === 'video' && !c.text ? { label: 'Arrêt sur image ici', shortcut: 'Alt+F', disabled: media?.kind !== 'video', action: freezeFrame } : null,
+    // Les autres pistes du même genre, de haut en bas.
+    ...(isFree(track) ? tracksOfKind(st.project, kindOf(track)).filter(t => t !== track).map(t => ({ label: `Déplacer vers la piste « ${trackLabel(t)} »`, disabled: !!st.project.tracks[t]?.locked, action: () => sendClipToTrack(id, t) })) : []),
     isFree(track) && media?.kind !== 'video' ? { label: 'Étendre à toute la vidéo', action: () => { const b = S().project; S().apply(p => spanWhole(p, id)); if (S().project === b) S().notify('Impossible : la piste principale est vide, ou un autre clip occupe déjà cette piste.'); } } : null,
     null,
     hasSound ? { label: c.volume > 0 ? 'Couper le son du clip' : 'Rétablir le son du clip', shortcut: 'Ctrl+Maj+M', action: () => toggleMute(id) } : null,
@@ -136,12 +141,32 @@ export function menuForLane(track: TrackId, time: number): MenuEntry[] {
   const gap = gapAt(S().project, track, time);
   return [
     gap ? { label: `Refermer ce vide (${(gap[1] - gap[0]).toFixed(1)} s)`, action: () => { if (!isLocked(track)) S().apply(p => closeGap(p, track, time)); } } : null,
-    { label: 'Coller ici', shortcut: 'Ctrl+V', disabled: !clipboard || clipboard.track !== track, action: () => { S().select(null); pasteClip(time); } },
+    { label: 'Coller ici', shortcut: 'Ctrl+V', disabled: !clipboard || kindOf(clipboard.track) !== kindOf(track), action: () => { S().select(null); pasteClip(time, track); } },
     { label: 'Placer la tête de lecture ici', action: () => { player.pause(); player.seek(time); } },
     { label: 'Poser un repère ici', action: () => S().apply(p => addMarker(p, time).project) },
     track === 'video' ? { label: 'Arrêt sur image à la tête de lecture', shortcut: 'Alt+F', action: freezeFrame } : null,
-    track === 'text' ? { label: 'Ajouter un titre…', action: () => S().setTab('titles') } : null,
-    track !== 'text' ? { label: 'Importer des médias…', action: () => S().setTab('media') } : null,
+    kindOf(track) === 'text' ? { label: 'Ajouter un titre…', action: () => S().setTab('titles') } : null,
+    kindOf(track) !== 'text' ? { label: 'Importer des médias…', action: () => S().setTab('media') } : null,
+  ];
+}
+
+const TRACK_KINDS: [TrackKind, string][] = [['text', 'Titres'], ['overlay', 'Par-dessus (vidéo ou image)'], ['sound', 'Son'], ['audio', 'Musique']];
+/** Menu du bouton « + Piste ». */
+export function menuForAddTrack(): MenuEntry[] {
+  const full = Object.keys(S().project.extra).length >= MAX_EXTRA_TRACKS;
+  return TRACK_KINDS.map(([kind, label]) => ({ label: `Piste ${label}`, disabled: full, action: () => addTrackOfKind(kind) }));
+}
+/** Menu de l'en-tête d'une piste : rang, suppression, hauteur. */
+export function menuForTrack(track: TrackId): MenuEntry[] {
+  const st = S(), p = st.project, free = isFree(track), kind = TRACK_KINDS.find(k => k[0] === kindOf(track));
+  return [
+    free ? { label: 'Monter', disabled: moveTrack(p, track, -1) === p, action: () => shiftTrack(track, -1) } : null,
+    free ? { label: 'Descendre', disabled: moveTrack(p, track, 1) === p, action: () => shiftTrack(track, 1) } : null,
+    null,
+    kind ? { label: `Ajouter une piste ${kind[1]}`, disabled: Object.keys(p.extra).length >= MAX_EXTRA_TRACKS, action: () => addTrackOfKind(kind[0]) } : null,
+    !isBase(track) ? { label: 'Supprimer la piste', danger: true, action: () => deleteTrack(track) } : null,
+    null,
+    { label: 'Hauteur par défaut', disabled: st.layout.laneH[track] === undefined, action: () => resetLaneHeight(track) },
   ];
 }
 
@@ -194,7 +219,7 @@ export function insertMedia(mediaId: string) {
 export function menuForMedia(mediaId: string): MenuEntry[] {
   const st = S(), m = st.project.media.find(x => x.id === mediaId);
   if (!m) return [];
-  const used = [...st.project.video, ...st.project.audio, ...st.project.sound, ...st.project.overlay].filter(c => c.mediaId === mediaId).length;
+  const used = st.project.order.flatMap(t => clipsOf(st.project, t)).filter(c => c.mediaId === mediaId).length;
   return [
     m.kind !== 'audio' ? { label: 'Insérer à la tête de lecture', action: () => insertMedia(mediaId) } : null,
     { label: m.kind === 'audio' ? 'Ajouter à la suite sur la piste Musique' : 'Ajouter à la fin de la piste Vidéo', action: () => addToTimeline(mediaId) },

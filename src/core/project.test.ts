@@ -32,7 +32,7 @@ describe('lecture d\'un projet', () => {
   });
   it('refuse ce qui n\'est pas un projet', () => {
     expect(parseProject('pas du json')).toBeNull();
-    expect(parse({ version: 3, media: [], video: [], audio: [] })).toBeNull();
+    expect(parse({ version: 4, media: [], video: [], audio: [] })).toBeNull();
     expect(parse({ version: 1, media: {}, video: [], audio: [] })).toBeNull();
     expect(parse(null)).toBeNull();
   });
@@ -52,8 +52,9 @@ describe('lecture d\'un projet', () => {
   });
   it('reprend un projet de version 1 et lui ajoute les pistes libres vides', () => {
     const p = parse(base())!;
-    expect(p.version).toBe(2);
+    expect(p.version).toBe(3);
     expect(p.overlay).toEqual([]); expect(p.text).toEqual([]);
+    expect(p.extra).toEqual({}); expect(p.order).toEqual(['text', 'overlay', 'video', 'sound', 'audio']);
     expect(p.video[0].opacity).toBe(1); expect(p.video[0].blend).toBe('normal'); expect(p.video[0].fadeIn).toBe(0);
   });
   it('nettoie les titres et sépare les clips qui se chevauchent sur une piste libre', () => {

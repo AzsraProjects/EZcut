@@ -1,5 +1,5 @@
 /** Export : rend chaque image avec le même compositeur que l'aperçu et l'envoie à FFmpeg (processus principal). */
-import { projectDuration } from '../core/ops';
+import { clipsOf, isSound, kindOf, projectDuration } from '../core/ops';
 import type { Clip, Project } from '../core/types';
 import { ez, type AudioSegment } from '../desktop/api';
 import { player } from '../engine/player';
@@ -7,7 +7,8 @@ import { player } from '../engine/player';
 export interface ExportOptions { height: number; fps: number; codec?: 'h264' | 'hevc'; software?: boolean; }
 export interface ExportResult { ok: boolean; path?: string; error?: string; cancelled?: boolean; frames?: number; seconds?: number; }
 
-/** Plan audio : une suite de segments par piste (clips vidéo, musique, incrustations). Images, vidéos muettes et trous deviennent des silences. */
+/** Plan audio : une suite de segments par piste — la piste principale d'abord, puis chaque piste de son ou d'incrustation qui a du son,
+ *  dans l'ordre de la timeline. Images, vidéos muettes et trous deviennent des silences. */
 export function audioPlan(p: Project): AudioSegment[][] {
   const seg = (c: Clip): AudioSegment => {
     const m = p.media.find(x => x.id === c.mediaId);
@@ -25,8 +26,9 @@ export function audioPlan(p: Project): AudioSegment[][] {
   };
   // Une piste muette ne produit aucun son ; la piste principale garde ses durées, en silence.
   // Une incrustation masquée n'est pas lue du tout à l'aperçu : elle se tait aussi à l'export.
-  const off = (t: 'video' | 'audio' | 'overlay' | 'sound') => !!p.tracks[t]?.muted || (t === 'overlay' && !!p.tracks.overlay?.hidden);
-  return [p.video.map(c => (off('video') ? { ...seg(c), path: null } : seg(c))), off('audio') ? [] : free(p.audio), off('overlay') ? [] : free(p.overlay), off('sound') ? [] : free(p.sound)];
+  const off = (t: string) => !!p.tracks[t]?.muted || (kindOf(t) === 'overlay' && !!p.tracks[t]?.hidden);
+  const others = p.order.filter(t => isSound(t) || kindOf(t) === 'overlay').map(t => (off(t) ? [] : free(clipsOf(p, t)))).filter(list => list.length);
+  return [p.video.map(c => (off('video') ? { ...seg(c), path: null } : seg(c))), ...others];
 }
 
 export function exportSize(p: Project, height: number): { width: number; height: number } {

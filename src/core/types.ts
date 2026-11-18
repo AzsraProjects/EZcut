@@ -97,9 +97,15 @@ export interface Clip {
   off: boolean;
 }
 
-/** video est magnétique (clips à la suite, sans trou, avec transitions) ; les autres pistes sont libres (chaque clip a sa position).
+/** Genre d'une piste. video est magnétique (clips à la suite, sans trou, avec transitions) ; les autres sont libres (chaque clip a sa position).
  *  sound reçoit le son détaché d'une vidéo, les voix, les bruitages ; audio la musique. */
-export type TrackId = 'video' | 'audio' | 'sound' | 'overlay' | 'text';
+export type TrackKind = 'video' | 'audio' | 'sound' | 'overlay' | 'text';
+/** Identifiant d'une piste : son genre pour les cinq pistes de base, « genre-numéro » pour une piste ajoutée (overlay-2, text-3…). */
+export type TrackId = string;
+/** Pistes de base, toujours présentes, dans leur ordre par défaut de haut en bas. */
+export const BASE_TRACKS: readonly TrackKind[] = ['text', 'overlay', 'video', 'sound', 'audio'];
+/** Nombre maximal de pistes ajoutées par l'utilisateur. */
+export const MAX_EXTRA_TRACKS = 12;
 
 /** Repère posé sur la règle de la timeline. */
 export interface Marker { id: string; t: number; name: string; color: string; }
@@ -108,7 +114,7 @@ export const MARKER_COLORS = ['#ff5d6c', '#ff9f43', '#ffd84d', '#22e3b6', '#4cc9
 export interface TrackState { muted?: boolean; hidden?: boolean; locked?: boolean; }
 
 export interface Project {
-  version: 2;
+  version: 3;
   name: string;
   width: number;
   height: number;
@@ -123,8 +129,13 @@ export interface Project {
   overlay: Clip[];
   /** Titres. */
   text: Clip[];
+  /** Pistes ajoutées par l'utilisateur, par identifiant. */
+  extra: Record<string, Clip[]>;
+  /** Toutes les pistes, de haut en bas dans la timeline : pistes d'image (titres, incrustations) au-dessus de video, pistes de son en dessous.
+   *  Plus une piste d'image est haute, plus elle est dessinée par-dessus. */
+  order: TrackId[];
   markers: Marker[];
-  tracks: Partial<Record<TrackId, TrackState>>;
+  tracks: Record<TrackId, TrackState>;
 }
 
 export const IMAGE_DURATION = 5;
@@ -132,7 +143,7 @@ export const TEXT_DURATION = 5;
 export const MIN_CLIP = 0.1;
 
 export function emptyProject(): Project {
-  return { version: 2, name: 'Projet sans titre', width: 1920, height: 1080, fps: 30, media: [], video: [], audio: [], sound: [], overlay: [], text: [], markers: [], tracks: {} };
+  return { version: 3, name: 'Projet sans titre', width: 1920, height: 1080, fps: 30, media: [], video: [], audio: [], sound: [], overlay: [], text: [], extra: {}, order: [...BASE_TRACKS], markers: [], tracks: {} };
 }
 
 export function defaultText(): TextStyle {

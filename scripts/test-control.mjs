@@ -60,6 +60,23 @@ try {
   const ti = await tool('ezcut_add_title', { text: 'Test du lien', preset: 'impact', at: 0.5, duration: 2 });
   check('titre posé', ti.json?.track === 'text' && ti.json?.duration === 2, ti.error ?? ti.text);
 
+  // pistes ajoutées : création, clip posé dessus, changement de rang, refus sur une piste de base
+  const tk = await tool('ezcut_track', { action: 'add', kind: 'overlay' });
+  check('piste ajoutée par le lien', tk.json?.id === 'overlay-2' && tk.json?.trackOrder?.join() === 'text,overlay-2,overlay,video,sound,audio', tk.error ?? tk.text);
+  const ov2 = await tool('ezcut_add_clip', { mediaId: ml.id, track: 'overlay-2', at: 0 });
+  check('clip posé sur la piste ajoutée', ov2.json?.track === 'overlay-2' && ov2.json?.start === 0, ov2.error ?? ov2.text);
+  const mv = await tool('ezcut_track', { action: 'move', track: 'overlay-2', delta: -1 });
+  check('piste déplacée au-dessus des titres', mv.json?.trackOrder?.join() === 'overlay-2,text,overlay,video,sound,audio', mv.error ?? mv.text);
+  const tk2 = await tool('ezcut_track', { action: 'add', kind: 'text' });
+  const sent = await tool('ezcut_edit_clip', { clipId: ti.json.id, track: tk2.json?.id });
+  check('titre envoyé sur une autre piste de titres', sent.json?.track === 'text-2' && sent.json?.start === 0.5, sent.error ?? sent.text);
+  const rm = await tool('ezcut_track', { action: 'remove', track: 'text-2' });
+  const afterRm = await tool('ezcut_status');
+  check('piste supprimée avec son clip', !rm.error && !rm.json?.trackOrder?.includes('text-2') && afterRm.json?.tracks?.text?.length === 0 && afterRm.json?.tracks?.['overlay-2']?.length === 1, rm.error ?? rm.text);
+  await tool('ezcut_undo');
+  const baseRm = await tool('ezcut_track', { action: 'remove', track: 'overlay' }), ghostTrack = await tool('ezcut_add_clip', { mediaId: ml.id, track: 'overlay-9', at: 0 });
+  check('piste de base non supprimable, piste inconnue refusée', !!baseRm.error && !!ghostTrack.error, baseRm.text + ghostTrack.text);
+
   const cat = await tool('ezcut_catalog', { kind: 'filter', query: 'sépia', details: true });
   check('recherche dans la banque', cat.json?.filters?.length >= 1 && Array.isArray(cat.json.filters[0].params), cat.error ?? cat.text);
   const fx = await tool('ezcut_apply_effect', { clipId: ca.json.id, effectId: cat.json.filters[0].id });
@@ -92,6 +109,8 @@ try {
   const proj = path.join(dir, 'essai.ezcut');
   const sv = await tool('ezcut_save', { path: proj });
   check('projet enregistré', !sv.error && fs.existsSync(proj) && JSON.parse(fs.readFileSync(proj, 'utf8')).video.length === 2, sv.error ?? '');
+  const file = JSON.parse(fs.readFileSync(proj, 'utf8'));
+  check('pistes ajoutées dans le fichier (version 3)', file.version === 3 && file.extra?.['overlay-2']?.length === 1 && file.extra?.['text-2']?.length === 1 && file.order?.[0] === 'overlay-2', JSON.stringify(file.order));
   check('aucune adresse de lecture dans le fichier', JSON.parse(fs.readFileSync(proj, 'utf8')).media.every(m => m.url === ''));
 
   const ex = await tool('ezcut_export', { outPath: out, height: 360, fps: 30 });

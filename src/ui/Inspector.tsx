@@ -1,4 +1,5 @@
-import { findClip, patchClip, removeFx, setTransition, spanWhole, trimClip } from '../core/ops';
+import { findClip, isImage, isSound, patchClip, removeFx, setTransition, spanWhole, trimClip } from '../core/ops';
+import { trackLabel } from './actions';
 import { BLEND_MODES, TEXT_ANIMS, type BlendMode, type Clip, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TrackId } from '../core/types';
 import { catalog, humanize, type CatEffect, type CatTransition } from '../effects/catalog';
 import type { IsfInput } from '../engine/gl';
@@ -11,7 +12,6 @@ import { timecode } from './time';
 const st = () => useStore.getState();
 const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', screen: 'Écran (éclaircit)', multiply: 'Produit (assombrit)', add: 'Addition', overlay: 'Contraste renforcé' };
 const ANIM_LABELS: Record<TextAnim, string> = { none: 'Aucune', fade: 'Fondu', slide: 'Glissement', pop: 'Rebond', type: 'Machine à écrire' };
-const TRACK_LABELS: Record<TrackId, string> = { video: 'piste Vidéo', overlay: 'piste Par-dessus', text: 'piste Titres', sound: 'piste Son', audio: 'piste Musique' };
 
 /** Curseur : un point d'annulation au début du geste, puis des mises à jour sans historique. */
 function Slider({ label, value, min, max, step, digits = 2, unit = '', onChange }: { label: string; value: number; min: number; max: number; step?: number; digits?: number; unit?: string; onChange: (v: number) => void }) {
@@ -84,14 +84,14 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
   const media = project.media.find(m => m.id === clip.mediaId);
   const poster = useStore(s => s.thumbs[clip.mediaId]?.poster);
   const edit = (fn: (c: Clip) => void) => st().apply(p => patchClip(p, clip.id, fn), false);
-  const isAudio = track === 'audio' || track === 'sound', isText = !!clip.text, layered = track === 'overlay' || track === 'text', col = catalog.color;
+  const isAudio = isSound(track), isText = !!clip.text, layered = isImage(track), col = catalog.color;
   const colorVals: Params = col ? { ...Object.fromEntries(col.inputs.map(i => [i.NAME, i.DEFAULT as ParamValue])), ...clip.color } : {};
   const tf = clip.transform, hasSound = isAudio || (!!media?.hasAudio && media.kind !== 'image' && !clip.still);
   const kind = isText ? 'Titre' : isAudio ? 'Audio' : clip.still ? 'Arrêt sur image' : media?.kind === 'image' ? 'Image' : 'Vidéo';
   return <>
     <div className="ihead">
       {poster && <img src={poster} alt="" />}
-      <div><b>{isText ? clip.text!.content.split('\n')[0] || 'Titre' : media?.name ?? 'Média introuvable'}</b><span>{kind} · {TRACK_LABELS[track]} · {timecode(clip.dur, project.fps)}</span></div>
+      <div><b>{isText ? clip.text!.content.split('\n')[0] || 'Titre' : media?.name ?? 'Média introuvable'}</b><span>{kind} · piste {trackLabel(track)} · {timecode(clip.dur, project.fps)}</span></div>
     </div>
     {isText && <TextSection clip={clip} edit={edit} />}
     {!isAudio && <div className="sec">

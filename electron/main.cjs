@@ -19,6 +19,8 @@ const DIST = path.join(__dirname, '..', 'dist');
 const APP_ORIGIN = 'app://ezcut';
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ezmedia:; media-src 'self' blob: ezmedia:; connect-src 'self' ezmedia:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'";
 const MAX_PROJECT_BYTES = 50e6, MAX_MEDIA = 2000, MAX_SEGMENTS = 5000;
+// Pistes de son mixées à l'export : la piste principale, les pistes de son et d'incrustation de base, les pistes ajoutées (12 au plus), avec de la marge.
+const MAX_AUDIO_TRACKS = 24;
 
 const EXT = {
   video: ['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'],
@@ -212,7 +214,7 @@ function audioGraph(tracks, total) {
   // Chaque piste devient une suite de segments (son du fichier ou silence), puis les pistes sont mixées.
   const inputs = [], filters = [], mixed = [];
   let n = 1, count = 0; // l'entrée 0 est la vidéo brute
-  (Array.isArray(tracks) ? tracks.slice(0, 4) : []).forEach((segs, ti) => {
+  (Array.isArray(tracks) ? tracks.slice(0, MAX_AUDIO_TRACKS) : []).forEach((segs, ti) => {
     const labels = [];
     (Array.isArray(segs) ? segs : []).forEach((s, si) => {
       if (++count > MAX_SEGMENTS || !s) return;

@@ -1,6 +1,7 @@
 /** Lecture d'un fichier de projet. Le contenu peut venir d'un inconnu : tout est vérifié, borné et reconstruit champ par champ.
- *  Les projets de version 1 (sans incrustations ni titres) sont repris tels quels. */
-import { BLEND_MODES, MARKER_COLORS, MIN_CLIP, TEXT_ANIMS, defaultText, type BlendMode, type Marker, type TrackId, type TrackState, type Clip, type FxInstance, type Media, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TransitionInstance } from './types';
+ *  Les projets de version 1 (sans incrustations ni titres) et 2 (cinq pistes fixes) sont repris tels quels. */
+import { EXTRA_TRACK, fixOrder, kindOf, isSound } from './ops';
+import { BASE_TRACKS, MAX_EXTRA_TRACKS, BLEND_MODES, MARKER_COLORS, MIN_CLIP, TEXT_ANIMS, defaultText, type BlendMode, type Marker, type TrackState, type Clip, type FxInstance, type Media, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TransitionInstance } from './types';
 
 const MAX_MEDIA = 2000, MAX_CLIPS = 5000, MAX_FX = 32, MAX_PARAMS = 64;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -74,32 +75,40 @@ function clip(v: unknown, mediaIds: Set<string>, isText: boolean): Clip | null {
 export function parseProject(json: string): Project | null {
   let raw: unknown;
   try { raw = JSON.parse(json); } catch { return null; }
-  if (!isObj(raw) || (raw.version !== 1 && raw.version !== 2) || !Array.isArray(raw.media) || !Array.isArray(raw.video) || !Array.isArray(raw.audio)) return null;
+  if (!isObj(raw) || (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) || !Array.isArray(raw.media) || !Array.isArray(raw.video) || !Array.isArray(raw.audio)) return null;
   const seen = new Set<string>();
   const med = raw.media.slice(0, MAX_MEDIA).map(media).filter((m): m is Media => !!m && !seen.has(m.id) && !!seen.add(m.id));
-  const ids = new Set(med.map(m => m.id)), kindOf = new Map(med.map(m => [m.id, m.kind]));
+  const ids = new Set(med.map(m => m.id)), mediaKind = new Map(med.map(m => [m.id, m.kind]));
   const clipIds = new Set<string>();
   const fresh = (c: Clip | null): c is Clip => !!c && !clipIds.has(c.id) && !!clipIds.add(c.id);
   // Pistes d'image : vidéos et images. Pistes de son : fichiers audio, et vidéos dont le son a été détaché.
   const mediaTrack = (list: unknown, sound: boolean) => (Array.isArray(list) ? list : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, false))
-    .filter((c): c is Clip => !!c && (sound ? kindOf.get(c.mediaId) !== 'image' : kindOf.get(c.mediaId) !== 'audio')).filter(fresh);
+    .filter((c): c is Clip => !!c && (sound ? mediaKind.get(c.mediaId) !== 'image' : mediaKind.get(c.mediaId) !== 'audio')).filter(fresh);
   const video = mediaTrack(raw.video, false), audio = mediaTrack(raw.audio, true), sound = mediaTrack(raw.sound, true), overlay = mediaTrack(raw.overlay, false);
   // Version 1 : la piste audio était magnétique, les clips s'y suivaient sans position propre.
   if (raw.version === 1) { let at = 0; for (const c of audio) { c.start = at; at += c.dur; } }
-  const titles = (Array.isArray(raw.text) ? raw.text : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, true)).filter(fresh);
+  const textTrack = (list: unknown) => (Array.isArray(list) ? list : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, true)).filter(fresh);
+  const titles = textTrack(raw.text);
+  // Pistes ajoutées : identifiant « genre-numéro », en nombre borné, chacune lue comme la piste de base de son genre.
+  const extra: Record<string, Clip[]> = {};
+  if (isObj(raw.extra)) for (const [id, list] of Object.entries(raw.extra)) {
+    if (!EXTRA_TRACK.test(id) || Object.keys(extra).length >= MAX_EXTRA_TRACKS) continue;
+    extra[id] = kindOf(id) === 'text' ? textTrack(list) : mediaTrack(list, isSound(id));
+  }
+  const extraIds = Object.keys(extra), added = (sound: boolean) => extraIds.filter(id => isSound(id) === sound).map(id => extra[id]);
   // Une transition n'existe qu'entre deux clips de la piste principale.
   video.forEach((c, i) => { const next = video[i + 1]; if (!next) c.transition = null; else if (c.transition) c.transition.dur = Math.min(c.dur, next.dur, Math.max(0.2, c.transition.dur)); });
-  for (const c of [...audio, ...sound]) { c.transition = null; c.fx = []; c.still = false; c.vfadeIn = 0; c.vfadeOut = 0; }
+  for (const c of [audio, sound, ...added(true)].flat()) { c.transition = null; c.fx = []; c.still = false; c.vfadeIn = 0; c.vfadeOut = 0; }
   // Pistes libres : triées, sans recouvrement (un clip qui en chevauche un autre est repoussé après lui).
-  for (const list of [overlay, titles, audio, sound]) {
+  for (const list of [overlay, titles, audio, sound, ...added(false), ...added(true)]) {
     list.sort((a, b) => a.start - b.start);
     list.forEach((c, i) => { c.transition = null; const prev = list[i - 1]; if (prev && c.start < prev.start + prev.dur) c.start = prev.start + prev.dur; });
   }
   const markers: Marker[] = (Array.isArray(raw.markers) ? raw.markers : []).slice(0, 500).filter(isObj)
     .map((m, i) => ({ id: str(m.id, 80, 'mk-' + i), t: num(m.t, 0, 86400 * 4, 0), name: str(m.name, 80), color: color(m.color, MARKER_COLORS[0]) })).sort((a, b) => a.t - b.t);
-  const tracks: Partial<Record<TrackId, TrackState>> = {};
-  if (isObj(raw.tracks)) for (const k of ['video', 'audio', 'sound', 'overlay', 'text'] as const) { const s = raw.tracks[k]; if (isObj(s)) tracks[k] = { ...(s.muted === true ? { muted: true } : {}), ...(s.hidden === true ? { hidden: true } : {}), ...(s.locked === true ? { locked: true } : {}) }; }
+  const tracks: Record<string, TrackState> = {};
+  if (isObj(raw.tracks)) for (const k of [...BASE_TRACKS, ...extraIds]) { const s = Object.hasOwn(raw.tracks, k) ? raw.tracks[k] : null; if (isObj(s)) tracks[k] = { ...(s.muted === true ? { muted: true } : {}), ...(s.hidden === true ? { hidden: true } : {}), ...(s.locked === true ? { locked: true } : {}) }; }
   const even = (n: number) => Math.round(n / 2) * 2;
-  return { version: 2, name: str(raw.name, 120, 'Projet sans titre'), width: even(num(raw.width, 16, 8192, 1920)), height: even(num(raw.height, 16, 8192, 1080)),
-    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, sound, overlay, text: titles, markers, tracks };
+  return { version: 3, name: str(raw.name, 120, 'Projet sans titre'), width: even(num(raw.width, 16, 8192, 1920)), height: even(num(raw.height, 16, 8192, 1080)),
+    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, sound, overlay, text: titles, extra, order: fixOrder(raw.order, extraIds), markers, tracks };
 }

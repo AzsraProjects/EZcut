@@ -1,9 +1,9 @@
 /** Lien de pilotage, côté interface : exécute les commandes envoyées par un assistant (voir electron/control.cjs et tools/mcp).
  *  Chaque commande passe par les mêmes opérations que les gestes de l'utilisateur, donc reste annulable par Ctrl+Z,
  *  et le projet qui en résulte est revalidé comme un fichier venu de l'extérieur. */
-import { addMarker, patchMarker, removeMarker, setTrack, addFx, addOverlay, addSound, addText, appendClip, detachAudio, findClip, moveClip, moveFree, patchClip, projectDuration, removeClip, removeFx, setTransition, spanWhole, splitAt, startsOf, TRACKS, trimClip } from '../core/ops';
+import { addMarker, patchMarker, removeMarker, setTrack, addFx, addOverlay, addSound, addText, addTrack, appendClip, clipsOf, detachAudio, findClip, hasTrack, isBase, isSound, kindOf, lockedChange, moveClip, moveFree, moveToTrack, moveTrack, patchClip, projectDuration, removeClip, removeFx, removeTrack, setTransition, spanWhole, splitAt, startsOf, trimClip } from '../core/ops';
 import { parseProject } from '../core/project';
-import { defaultText, type Clip, type Project, type TrackId } from '../core/types';
+import { defaultText, MAX_EXTRA_TRACKS, type Clip, type Project, type TrackId, type TrackKind } from '../core/types';
 import { ez, type ControlRequest, type ImportedFile } from '../desktop/api';
 import { catalog, defaultsOf, transitionDefaults, type CatEffect, type CatItem } from '../effects/catalog';
 import { player } from '../engine/player';
@@ -27,13 +27,16 @@ function commit(next: Project): Project {
   const before = S().project;
   if (next === before) return before;
   // Une piste verrouillée par l'utilisateur ne se modifie pas, même par l'assistant : il faut d'abord la déverrouiller.
-  for (const t of TRACKS) if (before.tracks[t]?.locked && next.tracks[t]?.locked && JSON.stringify(before[t]) !== JSON.stringify(next[t])) fail(`La piste ${t} est verrouillée : déverrouillez-la avec ezcut_track avant de la modifier.`);
+  const locked = lockedChange(before, next);
+  if (locked) fail(`La piste ${locked} est verrouillée : déverrouillez-la avec ezcut_track avant de la modifier.`);
   const clean = parseProject(JSON.stringify(next)) ?? fail('Modification refusée : le projet obtenu serait invalide.');
   const urls = new Map(before.media.map(m => [m.id, m.url]));
   clean.media.forEach(m => { m.url = urls.get(m.id) ?? ''; });
   S().apply(() => clean);
   return clean;
 }
+/** Piste existante désignée par un paramètre. */
+const trackOf = (v: unknown, name = 'track'): TrackId => (typeof v === 'string' && hasTrack(S().project, v) ? v : fail(`Paramètre « ${name} » : piste inconnue. Les pistes du projet sont données par ezcut_status (trackOrder).`));
 const clipOf = (id: unknown) => findClip(S().project, str(id, 'clipId')) ?? fail('Clip introuvable : relancez ezcut_status pour obtenir les identifiants à jour.');
 const itemOf = (id: unknown, kinds: CatItem['kind'][]) => { const it = catalog.byId.get(str(id, 'effectId')); return it && kinds.includes(it.kind) ? it : fail('Effet introuvable dans le catalogue : cherchez son identifiant avec ezcut_catalog.'); };
 
@@ -59,10 +62,11 @@ function status() {
     project: { name: p.name, width: p.width, height: p.height, fps: p.fps, duration: +projectDuration(p).toFixed(3), file: st.filePath, unsaved: st.dirty },
     playhead: +player.t.toFixed(3), playing: player.playing, selection: st.sel,
     media: p.media.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, hasAudio: m.hasAudio, path: m.path, missing: !m.url })),
-    tracks: Object.fromEntries(TRACKS.map(t => { const s = startsOf(p, t); return [t, p[t].map((c, i) => describeClip(p, t, c, s[i]))]; })),
+    trackOrder: p.order,
+    tracks: Object.fromEntries(p.order.map(t => { const s = startsOf(p, t); return [t, clipsOf(p, t).map((c, i) => describeClip(p, t, c, s[i]))]; })),
     markers: p.markers.map(m => ({ id: m.id, time: +m.t.toFixed(3), name: m.name, color: m.color })),
     trackStates: p.tracks,
-    notes: 'Pistes : video (principale, clips à la suite, transitions) ; overlay (par-dessus), text (titres), sound (son détaché, voix, bruitages) et audio (musique) sont libres : chaque clip a sa position. Temps en secondes. Positions : fraction du cadre, x vers la droite, y vers le haut, 0 = centre.',
+    notes: 'Pistes : video (principale, clips à la suite, transitions) ; overlay (par-dessus), text (titres), sound (son détaché, voix, bruitages) et audio (musique) sont libres : chaque clip a sa position. D\'autres pistes libres s\'ajoutent avec ezcut_track (overlay-2, text-2, sound-2, audio-2…). trackOrder donne les pistes de haut en bas : au-dessus de video, plus une piste est haute, plus elle est dessinée par-dessus. Temps en secondes. Positions : fraction du cadre, x vers la droite, y vers le haut, 0 = centre.',
   };
 }
 
@@ -138,13 +142,18 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
 
   addClip: p => {
     const project = S().project, mediaId = str(p.mediaId, 'mediaId'), at = optNum(p.at, 'at') ?? player.t;
-    const r = (p.track === 'overlay' ? addOverlay(project, mediaId, at) : p.track === 'sound' || (p.track === 'music' && p.at !== undefined) ? addSound(project, mediaId, p.track === 'sound' ? 'sound' : 'audio', at) : appendClip(project, mediaId, optNum(p.index, 'index'))) ?? fail('Média introuvable, ou type de média incompatible avec cette piste.');
+    // « main » et « music » sont les noms historiques ; sinon l'identifiant d'une piste libre du projet (overlay-2, sound-2…).
+    const track = p.track === undefined || p.track === 'main' || p.track === 'video' ? null : p.track === 'music' ? 'audio' : trackOf(p.track);
+    if (track && kindOf(track) === 'text') fail('Une piste de titres reçoit des titres : utilisez ezcut_add_title.');
+    const r = (track && kindOf(track) === 'overlay' ? addOverlay(project, mediaId, at, track) : track && (track !== 'audio' || p.at !== undefined) ? addSound(project, mediaId, track, at) : appendClip(project, mediaId, optNum(p.index, 'index'))) ?? fail('Média introuvable, ou type de média incompatible avec cette piste.');
     const f = findClip(commit(r.project), r.clipId);
     return f ? describeClip(S().project, f.track, f.clip, f.start) : {};
   },
   addTitle: p => {
     const preset = TITLES.find(t => t.id === p.preset), style = { ...(preset?.style ?? defaultText()), ...(isObj(p.style) ? p.style : {}), content: str(p.text, 'text') };
-    const r = addText(S().project, style as never, optNum(p.at, 'at') ?? player.t, { ...preset?.transform, ...(isObj(p.position) ? p.position : {}) });
+    const track = p.track === undefined ? 'text' : trackOf(p.track);
+    if (kindOf(track) !== 'text') fail('Un titre se pose sur une piste de titres (text, text-2…).');
+    const r = addText(S().project, style as never, optNum(p.at, 'at') ?? player.t, { ...preset?.transform, ...(isObj(p.position) ? p.position : {}) }, track);
     let next = r.project;
     const dur = optNum(p.duration, 'duration');
     if (dur !== undefined) next = trimClip(next, r.clipId, 'end', dur - (findClip(next, r.clipId)?.clip.dur ?? dur));
@@ -154,6 +163,11 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
   editClip: p => {
     const f = clipOf(p.clipId), id = f.clip.id;
     let next = S().project;
+    if (p.track !== undefined && p.track !== f.track) {
+      const to = trackOf(p.track);
+      if (f.track === 'video' || kindOf(to) !== kindOf(f.track)) fail('Un clip ne change de piste que vers une piste libre du même genre (overlay vers overlay-2, text vers text-2…).');
+      next = moveToTrack(next, id, to);
+    }
     // Temps : par les opérations de montage, qui respectent le média et les voisins.
     if (p.trimStart !== undefined) next = trimClip(next, id, 'start', num(p.trimStart, 'trimStart'));
     if (p.trimEnd !== undefined) next = trimClip(next, id, 'end', num(p.trimEnd, 'trimEnd'));
@@ -172,20 +186,20 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     return g ? describeClip(S().project, g.track, g.clip, g.start) : {};
   },
   split: p => {
-    const track = (typeof p.track === 'string' && (TRACKS as string[]).includes(p.track) ? p.track : 'video') as TrackId, before = S().project;
+    const track = p.track === undefined ? 'video' : trackOf(p.track), before = S().project;
     const after = commit(splitAt(before, track, num(p.time, 'time')));
     if (after === before) fail('Rien à couper à cet instant sur cette piste (trop près d\'un bord, ou aucun clip).');
     return status().tracks[track];
   },
   removeClip: p => { commit(removeClip(S().project, clipOf(p.clipId).clip.id)); return {}; },
   detachAudio: p => {
-    const r = detachAudio(S().project, clipOf(p.clipId).clip.id) ?? fail('Impossible de détacher : ce clip n\'a pas de son, ou la piste sound est déjà occupée à cet endroit.');
+    const r = detachAudio(S().project, clipOf(p.clipId).clip.id, p.track === undefined ? 'sound' : trackOf(p.track)) ?? fail('Impossible de détacher : ce clip n\'a pas de son, la piste visée n\'est pas une piste de son, ou elle est déjà occupée à cet endroit.');
     const f = findClip(commit(r.project), r.clipId);
     return f ? describeClip(S().project, f.track, f.clip, f.start) : {};
   },
   applyEffect: p => {
     const f = clipOf(p.clipId), it = itemOf(p.effectId, ['effect', 'filter']) as CatEffect;
-    if (f.clip.text || f.track === 'audio') fail('Les effets s\'appliquent aux vidéos et aux images.');
+    if (f.clip.text || isSound(f.track)) fail('Les effets s\'appliquent aux vidéos et aux images.');
     commit(addFx(S().project, f.clip.id, it.id, { ...defaultsOf(it), ...(isObj(p.params) ? p.params : {}) } as never));
     return describeClip(S().project, f.track, findClip(S().project, f.clip.id)!.clip, f.start);
   },
@@ -218,9 +232,27 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     return status().markers;
   },
   track: p => {
-    const track = (TRACKS as unknown[]).includes(p.track) ? p.track as TrackId : fail('Paramètre « track » : video, overlay, text, sound ou audio.');
+    const action = typeof p.action === 'string' ? p.action : 'set', project = S().project;
+    if (action === 'add') {
+      const kind = (['text', 'overlay', 'sound', 'audio'] as unknown[]).includes(p.kind) ? p.kind as TrackKind : fail('Paramètre « kind » : text, overlay, sound ou audio.');
+      const r = addTrack(project, kind) ?? fail(`Un projet accepte ${MAX_EXTRA_TRACKS} pistes ajoutées au plus.`);
+      commit(r.project);
+      return { id: r.id, trackOrder: S().project.order };
+    }
+    const track = trackOf(p.track);
+    if (action === 'remove') {
+      if (isBase(track)) fail('Les cinq pistes de base ne se suppriment pas : seules les pistes ajoutées (overlay-2, text-2…).');
+      commit(removeTrack(project, track));
+      return { trackOrder: S().project.order };
+    }
+    if (action === 'move') {
+      if (track === 'video') fail('La piste video ne se déplace pas : les pistes d\'image restent au-dessus d\'elle, les pistes de son en dessous.');
+      commit(moveTrack(project, track, num(p.delta, 'delta')));
+      return { trackOrder: S().project.order };
+    }
+    if (action !== 'set') fail('Paramètre « action » : set, add, remove ou move.');
     const patch = Object.fromEntries((['muted', 'hidden', 'locked'] as const).filter(k => typeof p[k] === 'boolean').map(k => [k, p[k]]));
-    commit(setTrack(S().project, track, patch));
+    commit(setTrack(project, track, patch));
     return status().trackStates;
   },
   projectSettings: p => {

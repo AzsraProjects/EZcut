@@ -7,6 +7,7 @@ Un ADR consigne une décision qui engage durablement le projet : le contexte, le
 | [0001](0001-stack-technique.md) | Stack technique | Accepté sous condition des prototypes R1 à R5 |
 | [0002](0002-licence.md) | Licence du projet | Accepté |
 | [0003](0003-format-effets.md) | Format des packs d'effets | Accepté |
+| [0004](0004-pistes-dynamiques.md) | Pistes ajoutées et ordre des pistes | Accepté |
 
 ## Statuts
 

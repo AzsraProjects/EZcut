@@ -116,10 +116,10 @@ describe('pistes muettes', () => {
     expect(v0.every(s => s.path)).toBe(true);
     expect(music0.length).toBeGreaterThan(0);
     p = setTrack(setTrack(p, 'video', { muted: true }), 'audio', { muted: true });
-    const [v, music] = audioPlan(p);
+    const [v, ...others] = audioPlan(p);
     expect(v.map(s => s.path)).toEqual([null, null, null]);
     expect(v.map(s => s.dur)).toEqual(v0.map(s => s.dur));
-    expect(music).toEqual([]);
+    expect(others).toEqual([]); // une piste sans son n'est pas envoyée au mixage
   });
 });
 

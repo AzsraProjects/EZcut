@@ -1,25 +1,32 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { addOverlay, addSound, appendClip, freeSlot, isFree, isSound, moveClip, moveFree, patchClip, patchMarker, projectDuration, removeMarker, setTransition, startsOf, TRACKS, trimClip } from '../core/ops';
-import { IMAGE_DURATION, type Clip, type Marker, type Project, type TrackId } from '../core/types';
+import { addOverlay, addSound, appendClip, clipCount, clipsOf, freeSlot, isFree, isImage, isSound, kindOf, moveClip, moveFree, moveToTrack, moveTrack, patchClip, patchMarker, projectDuration, removeMarker, setTransition, startsOf, trimClip } from '../core/ops';
+import { IMAGE_DURATION, type Clip, type Marker, type Project, type TrackId, type TrackKind } from '../core/types';
 import { catalog } from '../effects/catalog';
 import { player } from '../engine/player';
-import { addMarkerAtPlayhead, applyItem, deleteSelection, selectClip, splitAtPlayhead, splitClipAt, toggleTrack } from './actions';
+import { addMarkerAtPlayhead, applyItem, deleteSelection, resetLaneHeight, selectClip, splitAtPlayhead, splitClipAt, toggleTrack, trackLabel } from './actions';
 import { openMenu } from './ContextMenu';
 import { dragging, endDrag } from './drag';
 import { Icon } from './Icon';
-import { menuForClip, menuForLane, menuForMarker, menuForRuler, menuForTransition } from './menus';
+import { menuForAddTrack, menuForClip, menuForLane, menuForMarker, menuForRuler, menuForTrack, menuForTransition } from './menus';
 import { useStore, type Tool } from './store';
 import { subscribeTime, timecode } from './time';
 
 const st = () => useStore.getState();
 const HEAD = 164;
-const LANES: { id: TrackId; label: string; icon: string; hint: string; mute: boolean; hide: boolean; h: number }[] = [
-  { id: 'text', label: 'Titres', icon: 'type', hint: 'Choisissez un modèle dans l\'onglet Titres', mute: false, hide: true, h: 34 },
-  { id: 'overlay', label: 'Par-dessus', icon: 'layers', hint: 'Glissez ici une vidéo ou une image à poser par-dessus la vidéo (logo, image dans l\'image)', mute: true, hide: true, h: 46 },
-  { id: 'video', label: 'Vidéo', icon: 'film', hint: 'Piste principale : glissez une vidéo ou une image ici, ou cliquez dessus dans la bibliothèque', mute: true, hide: true, h: 0 },
-  { id: 'sound', label: 'Son', icon: 'vol', hint: 'Son détaché d\'une vidéo (clic droit sur un clip), voix, bruitages', mute: true, hide: false, h: 40 },
-  { id: 'audio', label: 'Musique', icon: 'music', hint: 'Glissez une musique ici', mute: true, hide: false, h: 40 },
-];
+/** Apparence d'une piste selon son genre. h = hauteur par défaut ; 0 pour la piste Vidéo, qui prend la place restante. */
+const KINDS: Record<TrackKind, { icon: string; hint: string; mute: boolean; hide: boolean; h: number }> = {
+  text: { icon: 'type', hint: 'Choisissez un modèle dans l\'onglet Titres', mute: false, hide: true, h: 34 },
+  overlay: { icon: 'layers', hint: 'Glissez ici une vidéo ou une image à poser par-dessus la vidéo (logo, image dans l\'image)', mute: true, hide: true, h: 46 },
+  video: { icon: 'film', hint: 'Piste principale : glissez une vidéo ou une image ici, ou cliquez dessus dans la bibliothèque', mute: true, hide: true, h: 0 },
+  sound: { icon: 'vol', hint: 'Son détaché d\'une vidéo (clic droit sur un clip), voix, bruitages', mute: true, hide: false, h: 40 },
+  audio: { icon: 'music', hint: 'Glissez une musique ici', mute: true, hide: false, h: 40 },
+};
+/** Suit le pointeur depuis la fenêtre jusqu'au relâchement : le geste survit au redessin de l'élément saisi
+ *  (une piste qui change de rang, un clip qui change de piste). */
+function follow(move: (ev: PointerEvent) => void, end?: () => void) {
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); end?.(); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+}
 const LANE_MIN = 26, LANE_MAX = 320;
 /** Où l'élément glissé va se poser : sur quelle piste, à quel instant, pour quelle durée. insert = il s'insère entre deux clips, la suite est poussée. */
 interface Ghost { track: TrackId; start: number; dur: number; insert: boolean; }
@@ -33,10 +40,10 @@ interface TrimShift { index: number; seconds: number; }
 function snapPoints(p: Project, skipClip?: string, skipTrack?: TrackId, playhead = true): number[] {
   const pts = [0, ...p.markers.map(m => m.t)];
   if (playhead) pts.push(player.t);
-  for (const tr of TRACKS) {
+  for (const tr of p.order) {
     if (tr === skipTrack) continue;
     const s = startsOf(p, tr);
-    p[tr].forEach((c, i) => { if (c.id !== skipClip) pts.push(s[i], s[i] + c.dur); });
+    clipsOf(p, tr).forEach((c, i) => { if (c.id !== skipClip) pts.push(s[i], s[i] + c.dur); });
   }
   return pts;
 }
@@ -52,7 +59,7 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
   const selected = useStore(s => s.sel?.kind === 'clip' && s.sel.id === clip.id);
   const media = project.media.find(m => m.id === clip.mediaId);
   const strip = useStore(s => s.thumbs[clip.mediaId]?.strip);
-  const free = isFree(track), sound = isSound(track), visual = !sound, razor = tool === 'razor';
+  const kind = kindOf(track), free = isFree(track), sound = isSound(track), visual = !sound, razor = tool === 'razor';
   const hasSound = sound || (!!media?.hasAudio && media.kind === 'video' && !clip.still);
   /** Instant de la timeline sous le pointeur, à l'intérieur de ce clip. */
   const timeAt = (el: HTMLElement, clientX: number) => start + Math.max(0, Math.min(clip.dur - 0.001, (clientX - el.getBoundingClientRect().left) / pps));
@@ -104,14 +111,19 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
     }, () => setVolDrag(false));
   };
 
-  // Piste libre : le clip se déplace dans le temps en le faisant glisser ; un simple clic le sélectionne et y place la tête de lecture.
+  // Piste libre : le clip se déplace dans le temps en le faisant glisser, et passe sur une autre piste du même genre
+  // quand on l'amène au-dessus d'elle ; un simple clic le sélectionne, sans toucher à la tête de lecture.
   const slide = (e: React.PointerEvent) => {
     if (!free || e.button !== 0) return;
     const x0 = e.clientX, base = st().project, pts = snapPoints(base, clip.id);
-    let moved = false;
-    capture(e, ev => {
+    let moved = false, lane = track;
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* pointeur déjà relâché */ }
+    // Le geste est suivi depuis la fenêtre : en changeant de piste, le clip est redessiné dans une autre ligne.
+    follow(ev => {
       const dx = ev.clientX - x0;
-      if (!moved && Math.abs(dx) < 4) return;
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('[data-lane]')?.dataset.lane;
+      if (over === track || (over && kindOf(over) === kind && !base.tracks[over]?.locked && base.order.includes(over))) lane = over;
+      if (!moved && Math.abs(dx) < 4 && lane === track) return;
       if (!moved) { moved = true; st().checkpoint(); st().select({ kind: 'clip', id: clip.id }); }
       let want = clip.start + dx / pps, g: number | null = null;
       if (snapping(ev)) {
@@ -120,7 +132,7 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
         if (a !== null && (b === null || Math.abs(a - want) <= Math.abs(b - want - clip.dur))) { want = a; g = a; }
         else if (b !== null) { want = b - clip.dur; g = b; }
       }
-      st().apply(() => moveFree(base, clip.id, want), false);
+      st().apply(() => moveFree(lane === track ? base : moveToTrack(base, clip.id, lane), clip.id, want), false);
       onGuide(g);
     }, () => { onGuide(null); if (!moved) st().select({ kind: 'clip', id: clip.id }); }); // un clic sélectionne sans déplacer la tête de lecture
   };
@@ -131,13 +143,13 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
     if (item) {
       const it = catalog.byId.get(item);
       // Une transition lâchée sur un clip vise sa coupe la plus proche : la piste s'en charge.
-      if (!it || it.kind === 'transition' || (track !== 'video' && track !== 'overlay')) return;
+      if (!it || it.kind === 'transition' || (kind !== 'video' && kind !== 'overlay')) return;
       e.preventDefault(); e.stopPropagation(); applyItem(it, clip.id);
     } else if (moved && !free) {
       e.preventDefault(); e.stopPropagation(); // y compris sur lui-même : sinon le dépôt remonte à la piste et l'envoie en fin
       if (moved === clip.id) return;
       const r = e.currentTarget.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
-      st().apply(p => (p[track].some(c => c.id === moved) ? moveClip(p, moved, index + (after ? 1 : 0)) : p));
+      st().apply(p => (clipsOf(p, track).some(c => c.id === moved) ? moveClip(p, moved, index + (after ? 1 : 0)) : p));
     }
   };
   const label = clip.text ? clip.text.content.split('\n')[0] || 'Titre' : (clip.still ? 'Arrêt sur image — ' : '') + (media?.name ?? 'Média introuvable');
@@ -145,9 +157,9 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
   const muted = hasSound && clip.volume <= 0;
   const width = Math.max(4, clip.dur * pps);
   return (
-    <div className={`clip ${track}${selected ? ' sel' : ''}${clip.still ? ' still' : ''}${clip.off ? ' off' : ''}`} role="button" tabIndex={0} aria-pressed={selected} draggable={!free && !razor} data-clip={clip.id}
+    <div className={`clip ${kind}${selected ? ' sel' : ''}${clip.still ? ' still' : ''}${clip.off ? ' off' : ''}`} role="button" tabIndex={0} aria-pressed={selected} draggable={!free && !razor} data-clip={clip.id}
       // La bande d'images glisse avec le point d'entrée : en rognant le début, on voit le contenu défiler sous le bord.
-      style={{ left: (start + shift) * pps, width, backgroundImage: (track === 'video' || track === 'overlay') && strip ? `url("${strip}")` : undefined, backgroundPositionX: clip.still ? 0 : -clip.in * pps }}
+      style={{ left: (start + shift) * pps, width, backgroundImage: (kind === 'video' || kind === 'overlay') && strip ? `url("${strip}")` : undefined, backgroundPositionX: clip.still ? 0 : -clip.in * pps }}
       onContextMenu={e => { e.stopPropagation(); openMenu(e, menuForClip(clip.id)); }}
       onClick={free || razor ? undefined : () => st().select({ kind: 'clip', id: clip.id })} onPointerDown={razor ? cutHere : slide} onKeyDown={e => { if (e.key === 'Enter') st().select({ kind: 'clip', id: clip.id }); }}
       onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-clip', clip.id); e.dataTransfer.effectAllowed = 'move'; dragging.clip = clip.id; }} onDragEnd={endDrag}
@@ -178,9 +190,12 @@ export function Timeline({ height }: { height: number }) {
   const [trimShift, setTrimShift] = useState<TrimShift | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
   const [ghost, setGhost] = useState<Ghost | null>(null);
+  /** Piste dont on fait glisser l'en-tête pour la changer de rang. */
+  const [headDrag, setHeadDrag] = useState<TrackId | null>(null);
+  const heads = useRef<HTMLDivElement>(null);
   const laneH = useStore(s => s.layout.laneH);
   const total = projectDuration(project), span = Math.max(30, total + 10), width = span * pps;
-  const count = project.video.length + project.audio.length + project.sound.length + project.overlay.length + project.text.length;
+  const count = clipCount(project);
 
   /** Zoom qui fait tenir tout le montage dans la largeur visible. */
   const fit = () => {
@@ -281,13 +296,13 @@ export function Timeline({ height }: { height: number }) {
       e.preventDefault();
       const m = p.media.find(x => x.id === mediaId);
       if (!m) return;
-      if (track === 'text') { st().notify('Cette piste accueille les titres.'); return; }
+      if (kindOf(track) === 'text') { st().notify('Cette piste accueille les titres.'); return; }
       if ((m.kind === 'audio') !== isSound(track)) { st().notify(isSound(track) ? 'Cette piste accueille les fichiers audio.' : 'Cette piste accueille les vidéos et les images.'); return; }
       // Piste principale : le média s'insère entre les deux clips les plus proches de l'endroit visé. Ailleurs : à l'instant visé.
       const starts = startsOf(p, 'video'), index = p.video.filter((c, i) => starts[i] + c.dur / 2 < at).length;
-      const r = track === 'overlay' ? addOverlay(p, mediaId, at) : track === 'audio' || track === 'sound' ? addSound(p, mediaId, track, at) : appendClip(p, mediaId, index);
+      const r = kindOf(track) === 'overlay' ? addOverlay(p, mediaId, at, track) : isSound(track) ? addSound(p, mediaId, track, at) : appendClip(p, mediaId, index);
       if (r) { st().apply(() => r.project); selectClip(r.clipId); }
-    } else if (moved && !isFree(track)) { e.preventDefault(); st().apply(q => (q[track].some(c => c.id === moved) ? moveClip(q, moved, q[track].length) : q)); }
+    } else if (moved && !isFree(track)) { e.preventDefault(); st().apply(q => (clipsOf(q, track).some(c => c.id === moved) ? moveClip(q, moved, clipsOf(q, track).length) : q)); }
   };
   const allow = (e: React.DragEvent) => { if (e.dataTransfer.types.some(t => t.startsWith('application/x-ezcut'))) e.preventDefault(); };
   // Clic dans le vide d'une piste : désélectionne. La tête de lecture ne se déplace que depuis la règle.
@@ -304,9 +319,9 @@ export function Timeline({ height }: { height: number }) {
     };
     if (!p.tracks[track]?.locked) {
       const m = dragging.media ? p.media.find(x => x.id === dragging.media) : null;
-      if (m && track !== 'text' && (m.kind === 'audio') === isSound(track)) {
+      if (m && kindOf(track) !== 'text' && (m.kind === 'audio') === isSound(track)) {
         const dur = m.kind === 'image' ? IMAGE_DURATION : Math.max(0.1, m.duration);
-        g = track === 'video' ? { track, start: boundary(), dur, insert: true } : { track, start: freeSlot(p[track], dur, at), dur, insert: false };
+        g = track === 'video' ? { track, start: boundary(), dur, insert: true } : { track, start: freeSlot(clipsOf(p, track), dur, at), dur, insert: false };
       } else if (dragging.clip && track === 'video') {
         const c = p.video.find(x => x.id === dragging.clip);
         if (c) g = { track, start: boundary(c.id), dur: c.dur, insert: true };
@@ -317,9 +332,11 @@ export function Timeline({ height }: { height: number }) {
   useEffect(() => { const clear = () => { setGhost(null); endDrag(); }; addEventListener('dragend', clear); addEventListener('drop', clear); return () => { removeEventListener('dragend', clear); removeEventListener('drop', clear); }; }, []);
 
   // Hauteur des pistes : celle choisie par l'utilisateur, sinon la hauteur par défaut ; la piste Vidéo prend la place restante.
-  const fixed = LANES.reduce((s, l) => s + (laneH[l.id] ?? l.h), 0);
-  const heightOf = (l: typeof LANES[number]) => laneH[l.id] ?? (l.h || Math.max(44, height - 39 - 24 - fixed - 20));
-  const resizeLane = (l: typeof LANES[number]) => (e: React.PointerEvent) => {
+  const lanes = project.order.map(id => { const kind = kindOf(id); return { ...KINDS[kind], id, kind, label: trackLabel(id) }; });
+  type Lane = typeof lanes[number];
+  const fixed = lanes.reduce((s, l) => s + (l.id === 'video' ? 0 : laneH[l.id] ?? l.h), 0);
+  const heightOf = (l: Lane) => laneH[l.id] ?? (l.h || Math.max(44, height - 39 - 24 - fixed - 20));
+  const resizeLane = (l: Lane) => (e: React.PointerEvent) => {
     e.preventDefault(); e.stopPropagation();
     const el = e.currentTarget as HTMLElement, y0 = e.clientY, h0 = heightOf(l);
     el.setPointerCapture(e.pointerId);
@@ -327,7 +344,22 @@ export function Timeline({ height }: { height: number }) {
     const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
     el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
   };
-  const resetLane = (id: TrackId) => { const next = { ...st().layout.laneH }; delete next[id]; st().setLayout({ laneH: next }); };
+  // Rang d'une piste : son en-tête se tire vers le haut ou le bas, parmi les pistes d'image ou parmi les pistes de son.
+  const dragHead = (id: TrackId) => (e: React.PointerEvent) => {
+    if (e.button !== 0 || !isFree(id) || (e.target as HTMLElement).closest('button, .thr')) return;
+    const base = st().project, group = base.order.filter(isImage(id) ? isImage : isSound), from = group.indexOf(id), y0 = e.clientY;
+    if (group.length < 2) return;
+    // Milieu de chaque en-tête du groupe au début du geste : le rang visé se calcule sur cette géométrie figée,
+    // sinon deux pistes de hauteurs différentes s'échangeraient sans fin sous le pointeur.
+    const mids = group.map(t => { const r = heads.current?.querySelector(`[data-head="${t}"]`)?.getBoundingClientRect(); return r ? r.top + r.height / 2 : 0; });
+    let moved = false;
+    follow(ev => {
+      if (!moved && Math.abs(ev.clientY - y0) < 6) return;
+      if (!moved) { moved = true; st().checkpoint(); setHeadDrag(id); }
+      const to = mids.filter((m, i) => i !== from && m < ev.clientY).length;
+      st().apply(() => moveTrack(base, id, to - from), false);
+    }, () => setHeadDrag(null));
+  };
   const timeOf = (e: React.MouseEvent) => Math.max(0, (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps);
 
   const step = pps >= 80 ? 1 : pps >= 40 ? 2 : pps >= 16 ? 5 : pps >= 8 ? 10 : 30;
@@ -346,25 +378,29 @@ export function Timeline({ height }: { height: number }) {
         <button className="ib" title="Supprimer la sélection (Suppr)" aria-label="Supprimer" disabled={!sel} onClick={() => deleteSelection()}><Icon name="trash" /></button>
         <button className="ib" title="Poser un repère à la tête de lecture (M)" aria-label="Poser un repère" onClick={addMarkerAtPlayhead}><Icon name="flag" /></button>
         <button className="ib" aria-pressed={snap} title="Aimantation : les clips s'accrochent aux coupes, aux repères et à la tête de lecture (N). Alt la suspend pendant un geste." aria-label="Aimantation" onClick={() => st().set({ snap: !snap })}><Icon name="magnet" /></button>
+        <span className="sep" />
+        <button className="btn sm addtrack" title="Ajouter une piste : titres, par-dessus, son ou musique. Elle se déplace ensuite en tirant son en-tête." onClick={e => { const r = e.currentTarget.getBoundingClientRect(); openMenu({ preventDefault() {}, clientX: r.left, clientY: r.bottom + 2 }, menuForAddTrack()); }}>+ Piste</button>
         <span className="tinfo">{count} clip{count > 1 ? 's' : ''} · {timecode(total, project.fps)}</span>
         <button className="btn sm fit" title="Afficher tout le montage (Maj+Z)" disabled={!count} onClick={fit}>Ajuster</button>
         <label className="zoom" title="Zoom de la timeline — aussi : Ctrl + molette, Ctrl + = et Ctrl + -">Zoom<input type="range" min={4} max={240} step={1} value={pps} onChange={e => st().set({ pps: +e.target.value })} /></label>
       </div>
       <div className="tscroll" ref={scroller}>
         <div className="tracks" style={{ width: HEAD + width }}>
-          <div className="heads">
+          <div className="heads" ref={heads}>
             <div className="th r" />
-            {LANES.map(l => {
-              const ts = project.tracks[l.id] ?? {};
+            {lanes.map(l => {
+              const ts = project.tracks[l.id] ?? {}, movable = l.id !== 'video', num = l.id.slice(l.kind.length + 1);
               return (
-                <div key={l.id} className={`th ${l.id}`} title={l.hint} style={{ height: heightOf(l) }}>
-                  <Icon name={l.icon} /><span className="tlabel">{l.label}</span>
+                <div key={l.id} data-head={l.id} className={`th ${l.kind}${movable ? ' movable' : ''}${headDrag === l.id ? ' drag' : ''}`} style={{ height: heightOf(l) }}
+                  title={movable ? `${l.label} — ${l.hint}\nGlissez l'en-tête vers le haut ou le bas pour déplacer la piste · clic droit : monter, descendre, supprimer` : l.hint}
+                  onPointerDown={dragHead(l.id)} onContextMenu={e => openMenu(e, menuForTrack(l.id))}>
+                  <Icon name={l.icon} /><span className="tlabel"><span>{num ? l.label.slice(0, -num.length - 1) : l.label}</span>{num && <b>{num}</b>}</span>
                   <span className="tbtns">
                     {l.mute ? <button aria-pressed={!!ts.muted} title={ts.muted ? 'Rétablir le son de la piste' : 'Couper le son de la piste'} aria-label={`Couper le son de la piste ${l.label}`} onClick={() => toggleTrack(l.id, 'muted')}><Icon name={ts.muted ? 'mute' : 'vol'} /></button> : <span />}
                     {l.hide ? <button aria-pressed={!!ts.hidden} title={ts.hidden ? 'Afficher la piste' : 'Masquer la piste : elle n\'apparaît plus dans l\'aperçu ni à l\'export'} aria-label={`Masquer la piste ${l.label}`} onClick={() => toggleTrack(l.id, 'hidden')}><Icon name={ts.hidden ? 'eyeoff' : 'eye'} /></button> : <span />}
                     <button aria-pressed={!!ts.locked} title={ts.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste : ses clips ne peuvent plus être modifiés'} aria-label={`Verrouiller la piste ${l.label}`} onClick={() => toggleTrack(l.id, 'locked')}><Icon name={ts.locked ? 'lock' : 'unlock'} /></button>
                   </span>
-                  <span className="thr" title="Tirez pour changer la hauteur de la piste (double-clic : hauteur par défaut)" onPointerDown={resizeLane(l)} onDoubleClick={() => resetLane(l.id)} />
+                  <span className="thr" title="Tirez pour changer la hauteur de la piste (double-clic : hauteur par défaut)" onPointerDown={resizeLane(l)} onDoubleClick={() => resetLaneHeight(l.id)} />
                 </div>
               );
             })}
@@ -377,14 +413,14 @@ export function Timeline({ height }: { height: number }) {
                 onPointerDown={dragMarker(m)} onDoubleClick={() => st().set({ markerEdit: m.id })}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); st().set({ markerEdit: m.id }); } else if (e.key === 'Delete' || e.key === 'Backspace') { e.stopPropagation(); st().apply(p => removeMarker(p, m.id)); } }} onContextMenu={e => { e.stopPropagation(); openMenu(e, menuForMarker(m.id)); }}>{m.name && <span>{m.name}</span>}</button>)}
             </div>
-            {LANES.map(l => {
-              const starts = startsOf(project, l.id), ts = project.tracks[l.id] ?? {};
+            {lanes.map(l => {
+              const starts = startsOf(project, l.id), ts = project.tracks[l.id] ?? {}, clips = clipsOf(project, l.id);
               return (
-                <div key={l.id} className={`lane ${l.id}${ts.locked ? ' locked' : ''}${ts.hidden ? ' hidden' : ''}${ts.muted ? ' muted' : ''}`} style={{ height: heightOf(l) }} onDragOver={preview(l.id)} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setGhost(null); }} onDrop={dropOnLane(l.id)} onClick={clickLane}
+                <div key={l.id} data-lane={l.id} className={`lane ${l.kind}${ts.locked ? ' locked' : ''}${ts.hidden ? ' hidden' : ''}${ts.muted ? ' muted' : ''}`} style={{ height: heightOf(l) }} onDragOver={preview(l.id)} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setGhost(null); }} onDrop={dropOnLane(l.id)} onClick={clickLane}
                   onContextMenu={e => openMenu(e, menuForLane(l.id, timeOf(e)))}>
-                  {project[l.id].length === 0 && <span className="lane-empty">{l.hint}</span>}
+                  {clips.length === 0 && <span className="lane-empty">{l.hint}</span>}
                   {ghost?.track === l.id && <i className={ghost.insert ? 'ghost insert' : 'ghost'} style={{ left: ghost.start * pps, width: Math.max(3, ghost.dur * pps) }}><b>{ghost.insert ? 'S\'insère ici · ' : ''}{ghost.dur.toFixed(1)} s</b></i>}
-                  {project[l.id].map((c, i) => <ClipView key={c.id} clip={c} index={i} track={l.id} start={starts[i]} pps={pps} project={project} tool={tool}
+                  {clips.map((c, i) => <ClipView key={c.id} clip={c} index={i} track={l.id} start={starts[i]} pps={pps} project={project} tool={tool}
                     shift={l.id === 'video' && trimShift && i >= trimShift.index ? trimShift.seconds : 0} onShift={setTrimShift} onGuide={setGuide} />)}
                   {l.id === 'video' && !trimShift && project.video.slice(0, -1).map((c, i) => {
                     const cut = vStarts[i] + c.dur, tr = c.transition, def = tr ? catalog.byId.get(tr.effectId) : null;

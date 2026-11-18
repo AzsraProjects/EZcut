@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { findClip, TRACKS } from '../core/ops';
+import { findClip, lockedChange } from '../core/ops';
 import { emptyProject, type Project } from '../core/types';
 import type { MenuEntry } from './ContextMenu';
 
@@ -93,7 +93,7 @@ export const useStore = create<State>((set, get) => ({
     const { project, past } = get(), next = fn(project);
     if (next === project) return;
     // Piste verrouillée : aucune action, d'où qu'elle vienne, ne change ses clips tant qu'elle le reste.
-    for (const t of TRACKS) if (project.tracks[t]?.locked && next.tracks[t]?.locked && JSON.stringify(project[t]) !== JSON.stringify(next[t])) { get().notify('Cette piste est verrouillée : cliquez sur son cadenas pour la modifier.'); return; }
+    if (lockedChange(project, next)) { get().notify('Cette piste est verrouillée : cliquez sur son cadenas pour la modifier.'); return; }
     set(record ? { project: next, past: [...past, project].slice(-LIMIT), future: [], dirty: true } : { project: next, future: [], dirty: true });
   },
   applySilent(fn) { const next = fn(get().project); if (next !== get().project) set({ project: next }); },

@@ -34,13 +34,13 @@ flowchart LR
 
 | Outil | Rôle |
 |---|---|
-| `ezcut_status` | État du projet : médias, clips de chaque piste, tête de lecture |
+| `ezcut_status` | État du projet : médias, pistes de haut en bas (`trackOrder`), clips de chaque piste, tête de lecture |
 | `ezcut_catalog` | Effets, filtres, transitions et modèles de titres, avec leurs réglages |
 | `ezcut_import`, `ezcut_media_preview` | Importer des fichiers ; voir une planche d'images d'un média |
-| `ezcut_add_clip`, `ezcut_add_title` | Poser un média (piste principale ou par-dessus), un titre |
-| `ezcut_edit_clip`, `ezcut_split`, `ezcut_remove_clip` | Rogner, déplacer, régler, couper, retirer |
+| `ezcut_add_clip`, `ezcut_add_title` | Poser un média (piste principale, par-dessus, son, musique, ou une piste ajoutée désignée par son identifiant), un titre |
+| `ezcut_edit_clip`, `ezcut_split`, `ezcut_remove_clip` | Rogner, déplacer (dans le temps, ou vers une autre piste du même genre avec `track`), régler, couper, retirer |
 | `ezcut_apply_effect`, `ezcut_edit_effect`, `ezcut_set_transition` | Effets, filtres, transitions |
-| `ezcut_marker`, `ezcut_track` | Repères de la timeline ; piste muette, masquée, verrouillée |
+| `ezcut_marker`, `ezcut_track` | Repères de la timeline ; piste muette, masquée, verrouillée ; ajouter une piste (`action: add`, `kind`), la supprimer (`remove`), la changer de rang (`move`, `delta`) |
 | `ezcut_project`, `ezcut_transport` | Format du projet ; tête de lecture, lecture |
 | `ezcut_screenshot` | Image du montage tel qu'il sera exporté |
 | `ezcut_undo`, `ezcut_redo` | Annuler, rétablir |

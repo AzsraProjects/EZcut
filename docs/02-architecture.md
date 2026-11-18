@@ -57,7 +57,9 @@ graph TD
 
 Le code tient pour l'instant dans un seul paquet : les modules ci-dessus sont des dossiers de `src/` (`core`, `engine`, `effects`, `export`, `ui`, `desktop`) et `electron/` joue le rôle de `apps/desktop`. Le sens des dépendances est respecté ; le découpage en paquets séparés se fera quand un second consommateur le justifiera. L'import et les vignettes sont dans `ui/media.ts`, la mise à jour dans `electron/main.cjs` ; `ai` n'existe pas encore.
 
-Composition : la piste principale (magnétique, avec transitions) est rendue d'abord, puis chaque incrustation et chaque titre est posé par-dessus avec son opacité et son mode de fusion, en alpha prémultiplié. Les titres sont dessinés sur un canvas 2D à la résolution du rendu, puis traités comme une image.
+Pistes : cinq pistes de base (`text`, `overlay`, `video`, `sound`, `audio`), champs du projet, auxquelles l'utilisateur ajoute jusqu'à douze pistes libres nommées `<genre>-<numéro>` et rangées dans `extra` ; `order` donne toutes les pistes de haut en bas, l'image au-dessus de `video`, le son en dessous. Le code passe par `clipsOf` et `trackIds`, jamais par un champ du projet indexé par piste. Détail et raisons : [ADR-0004](adr/0004-pistes-dynamiques.md).
+
+Composition : la piste principale (magnétique, avec transitions) est rendue d'abord, puis chaque incrustation et chaque titre est posé par-dessus, de la piste d'image la plus basse à la plus haute, avec son opacité et son mode de fusion, en alpha prémultiplié. Les titres sont dessinés sur un canvas 2D à la résolution du rendu, puis traités comme une image.
 
 Écarts connus avec la cible : le temps est encore stocké en secondes flottantes et non en entiers ; l'aperçu décode avec les éléments vidéo du navigateur et non WebCodecs ; les transitions figent une image au lieu de faire se chevaucher les clips.
 
