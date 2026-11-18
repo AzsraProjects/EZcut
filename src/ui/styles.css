@@ -210,6 +210,9 @@ details.adv>.row{margin-bottom:9px}
 .bar{height:8px;border-radius:99px;background:var(--raised);overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent);transition:width .1s linear}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+.btn.claude{background:var(--accent-soft);color:var(--accent);font-weight:600;padding:5px 10px}
+.linkrow{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r2);padding:10px 12px}
+code{font:500 11px var(--f-mono);background:var(--raised);border-radius:4px;padding:1px 5px;user-select:text;word-break:break-all}
 .update{position:fixed;right:14px;bottom:14px;z-index:30;display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:440px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r2);padding:9px 12px;box-shadow:0 12px 40px rgba(0,0,0,.4)}
 .update-notes{flex-basis:100%;margin:4px 0 0;max-height:180px;overflow:auto;white-space:pre-wrap;font:inherit;color:var(--muted);user-select:text}
 .dialog.wide{width:min(560px,92vw)}

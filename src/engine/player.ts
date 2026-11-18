@@ -41,6 +41,8 @@ export class Player {
   onPlayState: (playing: boolean) => void = () => {};
   /** Appelé quand la première image d'une source devient disponible (les vignettes peuvent être refaites). */
   onSourceReady: () => void = () => {};
+  /** Anomalies du moteur (shader qui ne compile pas, média illisible), pour le journal. */
+  onLog: (msg: string, data?: unknown) => void = () => {};
   vw = 960; vh = PREVIEW_H;
 
   private glc!: HTMLCanvasElement;
@@ -97,6 +99,7 @@ export class Player {
     if (!p) {
       const it = catalog.byId.get(id);
       p = !it ? { ok: false as const, err: 'effet inconnu' } : it.kind === 'transition' ? this.engine.compileTransition(it) : this.engine.compileEffect(it);
+      if (!p.ok) this.onLog(`effet inutilisable : ${id}`, p.err);
       this.progs.set(id, p);
     }
     return p;
@@ -133,6 +136,7 @@ export class Player {
     } else {
       const v = document.createElement('video');
       v.crossOrigin = 'anonymous'; v.preload = 'auto'; v.playsInline = true; v.src = media.url;
+      v.addEventListener('error', () => this.onLog(`média illisible : ${media.name}`, v.error ? `code ${v.error.code} ${v.error.message}` : ''), { once: true });
       s = { url: media.url, kind: 'video', el: v, tex, w: media.width || 16, h: media.height || 9, loaded: false };
     }
     this.sources.set(clip.id, s);

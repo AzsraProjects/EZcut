@@ -10,6 +10,11 @@ const { pathToFileURL } = require('node:url');
 // Les modes développement et test ne sont jamais actifs dans une version installée.
 const DEV_URL = app.isPackaged ? '' : process.env.EZCUT_DEV_URL || '';
 const AUTOTEST = app.isPackaged ? '' : process.env.EZCUT_AUTOTEST || ''; // JSON { media: [...], out: "..." } : test d'intégration sans interface
+const log = require('./logger.cjs');
+const control = require('./control.cjs');
+// Tests : dossier de données à part (ne touche pas à l'installation de l'utilisateur) et fenêtre masquée.
+if (!app.isPackaged && process.env.EZCUT_USERDATA) app.setPath('userData', path.resolve(process.env.EZCUT_USERDATA));
+const HEADLESS = !app.isPackaged && process.env.EZCUT_HEADLESS === '1';
 const DIST = path.join(__dirname, '..', 'dist');
 const APP_ORIGIN = 'app://ezcut';
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ezmedia:; media-src 'self' blob: ezmedia:; connect-src 'self' ezmedia:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'";
@@ -132,6 +137,7 @@ async function probe(file) {
   const info = { path: file, url: mediaUrl(file), name: path.basename(file), kind, duration: 0, width: 0, height: 0, hasAudio: kind === 'audio' };
   // -protocol_whitelist file : un fichier piégé ne peut pas faire ouvrir d'autres sources à FFmpeg.
   const r = await run(FFPROBE, ['-v', 'error', '-protocol_whitelist', 'file', '-print_format', 'json', '-show_format', '-show_streams', file]);
+  if (r.code !== 0) log.warn('import', 'ffprobe a échoué pour ' + path.basename(file), r.err.trim().slice(0, 400));
   if (r.code === 0) {
     try {
       const j = JSON.parse(r.out), v = (j.streams || []).find(s => s.codec_type === 'video'), a = (j.streams || []).find(s => s.codec_type === 'audio');
@@ -200,7 +206,7 @@ const autosaveFile = () => path.join(app.getPath('userData'), 'autosave.json');
 let dirty = false, closing = false;
 
 /* ---------- export ---------- */
-let job = null, starting = false, lastExport = null;
+let job = null, starting = false, lastExport = null, exportArgs = null, controlOut = null;
 
 function audioGraph(tracks, total) {
   // Chaque piste devient une suite de segments (son du fichier ou silence), puis les pistes sont mixées.
@@ -236,6 +242,7 @@ async function exportStart(win, req) {
   starting = true;
   try {
     let out = AUTOTEST && typeof req.outPath === 'string' ? req.outPath : null;
+    if (!out && controlOut) { out = controlOut; controlOut = null; } // export demandé par le lien de pilotage : chemin déjà validé
     if (!out) {
       const safe = String(req.name || 'EZcut').slice(0, 120).replace(/[\\/:*?"<>|]/g, '_');
       const r = await dialog.showSaveDialog(win, { title: 'Exporter la vidéo', defaultPath: path.join(app.getPath('videos'), safe + '.mp4'), filters: [{ name: 'Vidéo MP4', extensions: ['mp4'] }] });
@@ -248,7 +255,9 @@ async function exportStart(win, req) {
       '-filter_complex', ['[0:v]vflip,format=yuv420p[vout]', ...filters].join(';'), '-map', '[vout]', '-map', '[aout]',
       ...videoArgs(req.codec === 'hevc' ? 'hevc' : 'h264', req.software === true), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', String(total), out];
     let child;
-    try { child = spawn(FFMPEG, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { return { ok: false, error: 'FFmpeg n\'a pas pu démarrer : ' + e.message }; }
+    log.info('export', `début ${width}x${height} ${fps} i/s, ${frames} images`, { encodeur: args[args.indexOf('-c:v') + 1], sortie: out });
+    try { child = spawn(FFMPEG, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { log.error('export', 'FFmpeg n\'a pas pu démarrer', e); return { ok: false, error: 'FFmpeg n\'a pas pu démarrer : ' + e.message }; }
+    exportArgs = args;
     const j = job = { child, out, err: '', failed: null, closed: null, size: width * height * 4 };
     child.stderr.on('data', d => { j.err = (j.err + d).slice(-4000); });
     child.stdin.on('error', e => { j.failed = j.failed || e.message; });
@@ -275,7 +284,8 @@ async function exportFinish() {
   j.child.stdin.end();
   const code = await j.closed;
   job = null;
-  if (code !== 0 || j.failed) return { ok: false, error: (j.failed || 'FFmpeg a échoué.') + ' ' + j.err.trim() };
+  if (code !== 0 || j.failed) { log.error('export', `FFmpeg a échoué (code ${code})`, { erreur: j.failed, stderr: j.err.trim(), arguments: exportArgs }); return { ok: false, error: (j.failed || 'FFmpeg a échoué.') + ' ' + j.err.trim() }; }
+  log.info('export', 'terminé', { sortie: j.out });
   lastExport = j.out;
   return { ok: true, path: j.out };
 }
@@ -306,16 +316,94 @@ function setupUpdates(win) {
   check(); setInterval(check, 24 * 3600e3);
 }
 
+/* ---------- lien de pilotage (Claude) ---------- */
+// Voir electron/control.cjs et tools/mcp. Les commandes qui touchent aux fichiers sont traitées ici ; les autres sont transmises à l'interface.
+let mainWin = null, callId = 0;
+const waiting = new Map();
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { return {}; } };
+const writeSettings = patch => { try { fs.writeFileSync(settingsFile(), JSON.stringify({ ...readSettings(), ...patch })); } catch (e) { log.warn('réglages', 'écriture impossible', e); } };
+
+/** Transmet une commande à l'interface et attend sa réponse. */
+function forward(method, params, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    if (!mainWin || mainWin.isDestroyed()) return reject(new Error('La fenêtre d\'EZcut est fermée.'));
+    const id = ++callId;
+    const timer = setTimeout(() => { waiting.delete(id); reject(new Error('L\'application n\'a pas répondu à temps.')); }, timeoutMs);
+    waiting.set(id, { resolve, reject, timer });
+    mainWin.webContents.send('control:request', { id, method, params });
+  });
+}
+/** Chemin d'écriture demandé par l'assistant : absolu, local, de l'extension attendue, dans un dossier qui existe. */
+function writablePath(p, ext, overwrite) {
+  if (typeof p !== 'string' || p.length > 1024 || p.includes('\0') || !path.isAbsolute(p)) throw new Error('Le chemin doit être absolu.');
+  const n = path.normalize(p);
+  if (n.startsWith('\\\\') || n.startsWith('//')) throw new Error('Les chemins réseau ne sont pas acceptés.');
+  if (path.extname(n).toLowerCase() !== ext) throw new Error('Le fichier doit se terminer par ' + ext + '.');
+  if (!fs.existsSync(path.dirname(n))) throw new Error('Le dossier de destination n\'existe pas.');
+  if (fs.existsSync(n) && overwrite !== true) throw new Error('Ce fichier existe déjà : choisissez un autre nom, ou demandez explicitement à le remplacer (overwrite).');
+  return n;
+}
+async function controlCall(method, params) {
+  switch (method) {
+    case 'ping': return { app: 'EZcut', version: app.getVersion() };
+    case 'logs': return { file: log.file, text: log.tail(Number(params.lines) || 200) };
+    case 'import': {
+      const files = await probeAll(params.paths);
+      remember(files.map(f => f.path));
+      const asked = Array.isArray(params.paths) ? params.paths.length : 0;
+      return { ...(await forward('registerMedia', { files })), refused: asked - files.length };
+    }
+    case 'export': {
+      if (job || starting) throw new Error('Un export est déjà en cours.');
+      const out = writablePath(params.outPath, '.mp4', params.overwrite);
+      controlOut = out;
+      try { return await forward('export', { height: params.height, fps: params.fps, codec: params.codec }, 4 * 3600e3); } finally { controlOut = null; }
+    }
+    case 'save': {
+      if (params.path !== undefined) projectPath = writablePath(params.path, '.ezcut', params.overwrite !== false);
+      if (!projectPath) throw new Error('Ce projet n\'a pas encore d\'emplacement : indiquez path (fichier .ezcut).');
+      const { json } = await forward('serialise', {});
+      if (typeof json !== 'string' || json.length > MAX_PROJECT_BYTES) throw new Error('Projet trop volumineux.');
+      fs.writeFileSync(projectPath + '.tmp', json, 'utf8'); fs.renameSync(projectPath + '.tmp', projectPath);
+      await forward('markSaved', { path: projectPath });
+      return { path: projectPath };
+    }
+    case 'open': {
+      const file = localProject(params.path);
+      pendingOpen = file;
+      return forward('loadProject', { json: fs.readFileSync(file, 'utf8'), path: file });
+    }
+    default: return forward(method, params, method === 'screenshot' || method === 'mediaPreview' ? 120000 : 60000);
+  }
+}
+function localProject(p) {
+  if (typeof p !== 'string' || !path.isAbsolute(p) || path.extname(p).toLowerCase() !== '.ezcut') throw new Error('Indiquez le chemin absolu d\'un fichier .ezcut.');
+  const n = path.normalize(p);
+  if (n.startsWith('\\\\') || !fs.existsSync(n) || !fs.statSync(n).isFile() || fs.statSync(n).size > MAX_PROJECT_BYTES) throw new Error('Projet introuvable ou trop volumineux.');
+  return n;
+}
+async function setControl(on) {
+  if (on) await control.start(app.getPath('userData'), controlCall); else control.stop();
+  writeSettings({ control: !!on });
+  return control.status();
+}
+
 /* ---------- fenêtre ---------- */
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1500, height: 920, minWidth: 1100, minHeight: 700, backgroundColor: '#101216', show: !AUTOTEST, title: 'EZcut', autoHideMenuBar: true,
+    width: 1500, height: 920, minWidth: 1100, minHeight: 700, backgroundColor: '#101216', show: !AUTOTEST && !HEADLESS, title: 'EZcut', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false },
   });
   win.setMenuBarVisibility(false);
   // Aucune navigation ni fenêtre externe depuis l'interface.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
+  // Ce qui se passe mal dans l'interface arrive dans le journal, pas seulement dans une console que personne ne regarde.
+  win.webContents.on('console-message', (_e, level, message, line, source) => { if (level >= 2) log[level >= 3 ? 'error' : 'warn']('interface', message, `${String(source).split('/').pop()}:${line}`); });
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => log.error('interface', `chargement impossible (${code} ${desc})`, url));
+  win.webContents.on('render-process-gone', (_e, d) => log.error('interface', 'le processus d\'affichage s\'est arrêté', d));
+  mainWin = win;
   // Fermeture avec des modifications non enregistrées : l'utilisateur choisit.
   win.on('close', e => {
     if (closing || AUTOTEST) return;
@@ -331,10 +419,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  log.init(path.join(app.getPath('userData'), 'logs'), { echo: !app.isPackaged && !AUTOTEST });
   FFMPEG = resolveTool('ffmpeg', process.env.EZCUT_FFMPEG);
   FFPROBE = resolveTool('ffprobe', process.env.EZCUT_FFPROBE);
+  log.info('démarrage', `EZcut ${app.getVersion()}`, { electron: process.versions.electron, système: `${process.platform} ${require('node:os').release()} ${process.arch}`, installé: app.isPackaged, ffmpeg: !!FFMPEG, ffprobe: !!FFPROBE });
+  process.on('uncaughtException', e => log.error('principal', 'exception non interceptée', e));
+  process.on('unhandledRejection', e => log.error('principal', 'promesse rejetée sans traitement', e));
+  app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') log.error('principal', 'un processus auxiliaire s\'est arrêté', d); });
   loadKnown();
-  const encodersReady = detectEncoders();
+  const encodersReady = detectEncoders().then(() => log.info('démarrage', 'encodeurs matériels', hw));
   protocol.handle('app', serveApp);
   protocol.handle('ezmedia', serveMedia);
   // L'application n'a besoin d'aucune permission web (caméra, micro, position…).
@@ -399,6 +492,13 @@ app.whenReady().then(() => {
   handle('export:frame', (_e, pixels) => exportFrame(pixels));
   handle('export:finish', () => exportFinish());
   handle('export:cancel', () => exportCancel());
+  // Journal : l'interface y écrit ses erreurs ; l'utilisateur peut ouvrir le dossier pour le transmettre.
+  handle('log:write', (_e, level, scope, msg, data) => { const fn = level === 'error' ? log.error : level === 'warn' ? log.warn : log.info; fn(String(scope || 'interface').slice(0, 40), String(msg).slice(0, 2000), data); });
+  handle('log:open', () => { if (log.file) shell.showItemInFolder(log.file); });
+  // Lien de pilotage : réglage de l'utilisateur, réponses de l'interface aux commandes transmises.
+  handle('control:get', () => control.status());
+  handle('control:set', (_e, on) => setControl(on === true));
+  handle('control:response', (_e, id, ok, value) => { const w = waiting.get(id); if (!w) return; waiting.delete(id); clearTimeout(w.timer); if (ok) w.resolve(value); else w.reject(new Error(String(value))); });
   handle('shell:show', () => { if (lastExport && fs.existsSync(lastExport)) shell.showItemInFolder(lastExport); });
   handle('autotest:get', () => { if (!AUTOTEST) return null; try { return JSON.parse(fs.readFileSync(AUTOTEST, 'utf8')); } catch { return null; } });
   handle('autotest:done', (_e, result) => { if (!AUTOTEST) return; fs.writeFileSync(AUTOTEST + '.result.json', JSON.stringify(result, null, 1)); app.exit(result && result.ok ? 0 : 1); });
@@ -408,8 +508,11 @@ app.whenReady().then(() => {
   handle('update:install', () => { if (!updater || job) return false; closing = true; updater.quitAndInstall(); return true; });
 
   setupUpdates(createWindow());
+  // Le lien n'est ouvert que si l'utilisateur l'a activé (ou, en test, par variable d'environnement).
+  if (readSettings().control === true || (!app.isPackaged && process.env.EZCUT_CONTROL === '1')) void control.start(app.getPath('userData'), controlCall);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 // L'export interrompu est nettoyé (fichier partiel supprimé) avant de quitter.
+app.on('will-quit', () => { control.stop(); log.info('arrêt', 'EZcut se ferme'); });
 app.on('window-all-closed', () => { Promise.resolve(job && exportCancel()).catch(() => {}).finally(() => { if (process.platform !== 'darwin') app.quit(); }); });

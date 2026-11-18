@@ -8,6 +8,9 @@ import { exportProject } from '../export/exporter';
 import { deleteSelection, loadProject, newProject, openProject, saveProject, serialise, splitAtPlayhead } from './actions';
 import { ExportDialog } from './ExportDialog';
 import { Updates } from './Updates';
+import { ClaudeLink } from './ClaudeLink';
+import { connectControl } from './control';
+import { captureErrors, log } from './log';
 import { Icon } from './Icon';
 import { Inspector } from './Inspector';
 import { Library } from './Library';
@@ -51,6 +54,7 @@ export function App() {
   const exportOpen = useStore(s => s.exportOpen);
   const L = useStore(s => s.layout);
   const [recovered, setRecovered] = useState<{ savedAt: number; json: string } | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
   const drag = useRef(0);
 
   useEffect(() => {
@@ -61,14 +65,18 @@ export function App() {
     player.onPlayState = playing => st().set({ playing });
     let pending = 0;
     player.onSourceReady = () => { clearTimeout(pending); pending = window.setTimeout(() => st().set({ thumbEpoch: st().thumbEpoch + 1 }), 120); };
-    try { player.init(); } catch { st().notify('WebGL2 est indisponible : l\'aperçu ne peut pas s\'afficher.'); }
+    captureErrors();
+    player.onLog = (msg, data) => log.warn('moteur', msg, data);
+    try { player.init(); } catch (e) { log.error('moteur', 'initialisation impossible', String(e)); st().notify('WebGL2 est indisponible : l\'aperçu ne peut pas s\'afficher.'); }
+    connectControl();
     loadCatalog().then(async () => {
       st().set({ catalogReady: true });
+      log.info('catalogue', 'chargé', { effets: catalog.effects.length, filtres: catalog.filters.length, transitions: catalog.transitions.length });
       void runAutoTest();
       // Un projet non enregistré d'une session précédente (plantage, coupure) est proposé à la restauration.
       const saved = await ez?.autosaveRead();
       if (saved) setRecovered(saved);
-    }).catch(() => st().notify('La banque d\'effets n\'a pas pu être chargée.'));
+    }).catch(e => { log.error('catalogue', 'chargement impossible', String(e)); st().notify('La banque d\'effets n\'a pas pu être chargée.'); });
     const unsub = useStore.subscribe((s, prev) => {
       player.targetClipId = s.sel?.kind === 'clip' ? s.sel.id : null;
       if (s.dirty !== prev.dirty) { void ez?.setDirty(s.dirty); if (!s.dirty) void ez?.autosaveClear(); }
@@ -162,6 +170,7 @@ export function App() {
           <button className="ib" title="Rétablir la disposition par défaut" aria-label="Disposition par défaut" onClick={() => setL(DEFAULT_LAYOUT)}><Icon name="reset" /></button>
           <span className="sep" />
         </span>
+        <button className="btn sm claude" title="Laisser Claude piloter EZcut depuis VS Code" onClick={() => setLinkOpen(true)}><Icon name="chat" />Claude</button>
         <button className="ib" title="Aide : raccourcis et nouveautés" aria-label="Aide" onClick={() => dispatchEvent(new Event('ezcut:whatsnew'))}><Icon name="info" /></button>
         <button className="ib" title="Thème clair / sombre" aria-label="Thème clair ou sombre" onClick={() => st().set({ light: !st().light })}><Icon name="sun" /></button>
         <button className="btn primary" onClick={() => { player.pause(); st().set({ exportOpen: true }); }}><Icon name="export" />Exporter</button>
@@ -177,6 +186,7 @@ export function App() {
         <Timeline height={Math.min(L.tlH, Math.max(150, innerHeight - 260))} />
       </>}
       <Updates />
+      {linkOpen && <ClaudeLink onClose={() => setLinkOpen(false)} />}
       {exportOpen && <ExportDialog />}
       {recovered && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="Projet retrouvé">

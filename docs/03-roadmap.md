@@ -4,6 +4,27 @@ Chaque version a un thème, un contenu et un critère de sortie vérifiable. Auc
 
 > **Avancement au 2026-11-18.** La version 0.1.0 regroupe ce que ce plan répartissait entre 0.1 et 0.3, plus les titres, les fondus audio et la mise à jour. Restent à faire dans les étapes ci-dessous : images clés, sous-titres (éditeur, SRT), égaliseur, normalisation et ducking, toute l'IA, fond vert, masques, vitesse, courbes, autres formats que MP4, stabilisation, signature de l'installateur. Les prototypes de risque R2, R3 et R5 n'ont pas été menés à part : ils sont à mesurer sur l'application elle-même.
 
+## Priorités après la 0.1.0
+
+Tirées de l'analyse des fonctions les plus appréciées de Filmora (hors IA), du 2026-11-18. Son enseignement principal : ce qui plaît n'est pas la fonction la plus puissante, mais celle qui demande le moins de clics, sans fenêtre complexe, avec un retour visuel immédiat. Chaque ajout ci-dessous doit donc rester réglable depuis la timeline, l'aperçu ou l'inspecteur.
+
+Déjà en place : timeline par glisser-déposer, interface progressive, bibliothèque intégrée (effets, transitions, titres), aperçu en direct et manipulation dans l'aperçu.
+
+| Ordre | Fonction | Pourquoi à ce rang | Ampleur |
+|---|---|---|---|
+| 1 | Images clés sur tout réglage numérique | La plus demandée ; elle rend possibles les mouvements, les zooms progressifs et l'automation de volume | Moyenne |
+| 2 | Vitesse et rampes de vitesse | Très visible pour les formats courts ; demande de revoir la correspondance temps du clip / temps de la source, à l'aperçu comme à l'export | Moyenne à grande |
+| 3 | Masques, et étalonnage (courbes, roues, réglages locaux par masque) | Deux fonctions qui partagent le même mécanisme de masque | Moyenne |
+| 4 | Outils audio : réduction de bruit, ducking, synchronisation | Filtres FFmpeg existants ; la difficulté est d'entendre à l'aperçu ce qui sera exporté | Moyenne |
+| 5 | Plusieurs pistes de titres et d'incrustation | Lève la limite actuelle d'un seul titre à la fois | Petite à moyenne |
+| 6 | Raccourcis personnalisables | Peu coûteux, apprécié des utilisateurs réguliers | Petite |
+| 7 | Clips composés | Utile sur les projets longs ; touche au modèle de projet | Moyenne à grande |
+| 8 | Stabilisation | Traitement hors ligne par FFmpeg, puis remplacement du clip | Moyenne |
+| 9 | Multicaméra | Dépend de la synchronisation audio (rang 4) | Grande |
+| 10 | Suivi de mouvement | Le plus coûteux ; rien d'autre n'en dépend | Grande |
+
+Non planifié faute de contenu : musiques et modèles intégrés, qui demandent une source de contenus sous licence claire.
+
 ## Vue d'ensemble
 
 | Version | Thème | Résultat pour l'utilisateur |

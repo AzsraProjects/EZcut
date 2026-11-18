@@ -28,6 +28,12 @@ contextBridge.exposeInMainWorld('ez', {
   onUpdate: fn => { ipcRenderer.removeAllListeners('update:state'); ipcRenderer.on('update:state', (_e, state) => fn(state)); },
   updateDownload: () => ipcRenderer.invoke('update:download'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
+  log: (level, scope, msg, data) => { ipcRenderer.invoke('log:write', level, scope, msg, data).catch(() => {}); },
+  openLogs: () => ipcRenderer.invoke('log:open'),
+  controlStatus: () => ipcRenderer.invoke('control:get'),
+  controlEnable: on => ipcRenderer.invoke('control:set', on === true),
+  onControl: fn => { ipcRenderer.removeAllListeners('control:request'); ipcRenderer.on('control:request', (_e, req) => fn(req)); },
+  controlReply: (id, ok, value) => ipcRenderer.invoke('control:response', id, ok, value),
   autoTest: () => ipcRenderer.invoke('autotest:get'),
   autoTestDone: result => ipcRenderer.invoke('autotest:done', result),
 });

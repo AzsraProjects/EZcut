@@ -18,6 +18,7 @@ Licence : [GPL-3.0](LICENSE). Composants tiers : [THIRD-PARTY.md](THIRD-PARTY.md
 - **Projet** : enregistrement, sauvegarde automatique, restauration après une fermeture inattendue.
 - **Export** : MP4 en H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe.
 - **Disposition** : panneaux redimensionnables, masquables, interchangeables.
+- **Lien avec Claude** : Claude peut piloter EZcut depuis VS Code pour vous aider à monter, ou monter à votre place ([mode d'emploi](docs/09-lien-claude.md)).
 
 Le bouton d'aide, en haut à droite, liste les raccourcis clavier et les nouveautés.
 
@@ -42,6 +43,7 @@ npm run dist     # construit l'installateur Windows
 npm run typecheck     # types
 npm test              # tests unitaires : opérations de montage, lecture des projets, annulation
 npm run test:export   # test d'intégration : la vraie application importe, monte, exporte ; le fichier produit est contrôlé
+npm run test:link     # test du lien avec Claude : l'application est pilotée de bout en bout par le serveur MCP
 ```
 
 ## Organisation du code
@@ -55,6 +57,7 @@ npm run test:export   # test d'intégration : la vraie application importe, mont
 | `src/ui` | Interface React |
 | `src/desktop`, `electron/` | Pont vers le système : fichiers, dialogues, FFmpeg, mises à jour |
 | `effects/ezcut` | Effets et filtres écrits pour EZcut, au format ISF |
+| `tools/mcp` | Serveur MCP : les outils que Claude utilise pour piloter EZcut |
 | `tools/catalog` | Construction, test et tri du catalogue à partir des dépôts amont |
 | `docs/` | [Documentation](docs/README.md) : vision, architecture, feuille de route, méthode |
 

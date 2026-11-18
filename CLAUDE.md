@@ -16,6 +16,13 @@ Version 0.1.0 non publiée : éditeur complet de l'import à l'export (quatre pi
 - Catalogue d'effets : `node tools/catalog/build.mjs <ISF-Files/ISF> <gl-transitions/transitions> --all`, ouvrir `tools/catalog/harness.html` via le serveur de développement, puis relancer `build.mjs` sans `--all`.
 - Electron ne démarre pas si `ELECTRON_RUN_AS_NODE` est défini (c'est le cas dans les terminaux d'agent) : passer par les scripts npm, qui la retirent.
 
+## Piloter et déboguer EZcut
+
+- Le serveur MCP `ezcut` (`.mcp.json`) donne les outils `ezcut_*` pour piloter l'application ouverte : `ezcut_status` d'abord, `ezcut_screenshot` pour voir le rendu. Le lien doit être activé par l'utilisateur dans EZcut (bouton Claude). Détail : `docs/09-lien-claude.md`.
+- Journal : `%APPDATA%\ezcut\logs\ezcut.log`, ou l'outil `ezcut_logs`. Le lire en premier quand l'utilisateur signale un problème.
+- `npm run test:link` vérifie le lien de bout en bout.
+- Dépôt public : ne jamais y écrire de chemin, nom ou identifiant propre à la machine de l'utilisateur.
+
 ## Rythme de travail actuel
 
 Le 2026-11-18, l'utilisateur a choisi de valider la maquette une fois puis de laisser enchaîner la construction sans arrêt à chaque fonctionnalité. La règle ci-dessous redevient stricte pour tout changement de direction visuelle ou de périmètre.

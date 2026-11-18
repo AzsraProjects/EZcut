@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ezcut": {
+      "command": "node",
+      "args": ["tools/mcp/ezcut-mcp.mjs"]
+    }
+  }
+}

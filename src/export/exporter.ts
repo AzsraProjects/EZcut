@@ -48,10 +48,12 @@ export async function exportProject(p: Project, opts: ExportOptions, onProgress:
       await ez.exportFrame(buf);
       onProgress(f + 1, frames);
     }
-    const r = await ez.exportFinish();
-    return { ...r, frames, seconds: (performance.now() - t0) / 1000 };
+    const r = await ez.exportFinish(), seconds = (performance.now() - t0) / 1000;
+    ez.log(r.ok ? 'info' : 'error', 'export', r.ok ? `${frames} images en ${seconds.toFixed(1)} s (${(frames / seconds).toFixed(0)} images/s)` : 'échec', r.ok ? undefined : r.error);
+    return { ...r, frames, seconds };
   } catch (e) {
     await ez.exportCancel().catch(() => {});
+    ez.log('error', 'export', 'interrompu par une erreur de rendu', String((e as Error).stack ?? e));
     return { ok: false, error: String((e as Error).message ?? e) };
   } finally {
     player.resetExportState(width, height);

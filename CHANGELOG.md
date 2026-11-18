@@ -22,6 +22,8 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Disposition libre : chaque panneau se redimensionne, se masque, et la bibliothèque et l'inspecteur peuvent échanger de côté.
 - Enregistrer et rouvrir un projet ; sauvegarde automatique toutes les 20 secondes, proposée à la restauration après une fermeture inattendue.
 - Exporter en MP4, H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe (NVIDIA, Intel, AMD).
+- Lien avec Claude : une fois activé, Claude peut piloter EZcut depuis VS Code — importer, monter, habiller, vérifier à l'image, exporter.
+- Journal local de l'application, pour comprendre un problème après coup.
 - Installateur Windows : FFmpeg est inclus, rien d'autre à installer.
 - Vérification des mises à jour et notes de version dans l'application.
 

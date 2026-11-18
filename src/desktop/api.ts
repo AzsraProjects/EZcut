@@ -20,7 +20,17 @@ export interface AutoTest { media: string[]; out: string; height?: number; codec
 
 export type UpdateState = { status: 'available'; version: string; notes: string } | { status: 'downloading'; percent: number } | { status: 'ready'; version: string } | { status: 'error' };
 
+export interface ControlStatus { enabled: boolean; port: number | null; }
+export interface ControlRequest { id: number; method: string; params: Record<string, unknown>; }
+
 export interface EzApi {
+  /** Écrit dans le journal local de l'application. */
+  log(level: 'info' | 'warn' | 'error', scope: string, msg: string, data?: unknown): void;
+  openLogs(): Promise<void>;
+  controlStatus(): Promise<ControlStatus>;
+  controlEnable(on: boolean): Promise<ControlStatus>;
+  onControl(fn: (req: ControlRequest) => void): void;
+  controlReply(id: number, ok: boolean, value: unknown): Promise<void>;
   version(): Promise<string>;
   onUpdate(fn: (state: UpdateState) => void): void;
   updateDownload(): Promise<void>;

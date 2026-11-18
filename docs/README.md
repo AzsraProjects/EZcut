@@ -9,6 +9,7 @@
 5. [Interface](05-ui-ux.md) — disposition et règles d'ergonomie.
 6. [Méthode de travail](06-methode.md) — le cycle de validation et les rôles des agents.
 7. [Tests](07-tests.md) et [Versions et mises à jour](08-versions-mises-a-jour.md).
+8. [Lien avec Claude et journal](09-lien-claude.md) — piloter EZcut depuis VS Code, lire le journal.
 
 Modèles à copier : [proposition de fonctionnalité](modeles/proposition-fonctionnalite.md), [livraison de fonctionnalité](modeles/livraison-fonctionnalite.md), [notes de version](modeles/notes-de-version.md).
 
