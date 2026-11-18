@@ -7,8 +7,8 @@ export type Tab = 'media' | 'titles' | 'effects' | 'filters' | 'transitions';
 export type Tool = 'select' | 'razor';
 export type Selection = { kind: 'clip'; id: string } | { kind: 'transition'; id: string } | null;
 
-export interface Layout { libW: number; inspW: number; tlH: number; showLib: boolean; showInsp: boolean; showTl: boolean; swap: boolean; }
-export const DEFAULT_LAYOUT: Layout = { libW: 460, inspW: 310, tlH: 300, showLib: true, showInsp: true, showTl: true, swap: false };
+export interface Layout { libW: number; inspW: number; tlH: number; showLib: boolean; showInsp: boolean; showTl: boolean; swap: boolean; /** Hauteur choisie pour chaque piste, en pixels ; absente = hauteur par défaut. */ laneH: Record<string, number>; }
+export const DEFAULT_LAYOUT: Layout = { libW: 460, inspW: 310, tlH: 300, showLib: true, showInsp: true, showTl: true, swap: false, laneH: {} };
 function loadFavs(): string[] {
   try { const v: unknown = JSON.parse(localStorage.getItem('ezcut.favs') ?? '[]'); return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 500) : []; } catch { return []; }
 }

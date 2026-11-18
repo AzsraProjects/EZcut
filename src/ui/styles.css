@@ -289,3 +289,23 @@ input.sel.text{grid-column:2/4;width:100%;user-select:text}
 .tile.missing .thumb{outline-color:var(--danger)}
 .lost{position:absolute;inset:auto 5px 5px auto;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;background:var(--danger);color:#fff}
 .tools .sep{margin:0 4px}
+
+/* Hauteur de piste réglable : une poignée sur le bord bas de l'en-tête. */
+.th{position:relative}
+.thr{position:absolute;left:0;right:0;bottom:-3px;height:7px;cursor:row-resize;touch-action:none;z-index:2}
+.thr:hover{background:var(--accent);opacity:.6}
+.th.r,.ruler{position:sticky;top:0;background:var(--panel)}
+.th.r{z-index:3}
+.ruler{z-index:4}
+.heads{z-index:8}
+/* Défilement horizontal de la timeline : toujours visible, large, contrasté. */
+.tscroll{overflow-x:scroll}
+.tscroll::-webkit-scrollbar{height:15px;width:12px}
+.tscroll::-webkit-scrollbar-track{background:var(--panel2);border-top:1px solid var(--line)}
+.tscroll::-webkit-scrollbar-thumb{background:var(--dim);border:3px solid transparent;background-clip:content-box;border-radius:99px;min-width:48px}
+.tscroll::-webkit-scrollbar-thumb:hover{background:var(--muted);background-clip:content-box}
+.tscroll::-webkit-scrollbar-corner{background:var(--panel2)}
+/* Aperçu de dépôt : la place que prendra l'élément glissé. */
+.ghost{position:absolute;top:3px;bottom:3px;border:2px dashed var(--accent);border-radius:6px;background:var(--accent-soft);pointer-events:none;z-index:4}
+.ghost.insert{border-left:4px solid var(--accent)}
+.ghost b{position:absolute;left:6px;top:2px;font:600 10.5px var(--f-mono);color:var(--accent);white-space:nowrap}

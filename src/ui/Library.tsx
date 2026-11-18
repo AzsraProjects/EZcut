@@ -6,6 +6,7 @@ import { animState, drawText } from '../engine/text';
 import { addTitle, addToTimeline, applyItem, catalogList } from './actions';
 import { TITLES, type TitlePreset } from './titles';
 import { openMenu } from './ContextMenu';
+import { dragging, endDrag } from './drag';
 import { Icon } from './Icon';
 import { menuForMedia } from './menus';
 import { importWithDialog, replaceMediaFile } from './media';
@@ -81,7 +82,7 @@ function MediaTile({ m }: { m: Media }) {
   const fps = useStore(s => s.project.fps);
   return (
     <button className={m.url ? 'tile' : 'tile missing'} title={m.url ? 'Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture.' : 'Fichier introuvable : cliquez pour le retrouver'} draggable
-      onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-media', m.id); e.dataTransfer.effectAllowed = 'copy'; }}
+      onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-media', m.id); e.dataTransfer.effectAllowed = 'copy'; dragging.media = m.id; }} onDragEnd={endDrag}
       onClick={e => (m.url ? addToTimeline(m.id, e.shiftKey) : void replaceMediaFile(m.id))} onContextMenu={e => openMenu(e, menuForMedia(m.id))}>
       <span className="thumb">
         {poster ? <img src={poster} alt="" draggable={false} /> : <span className="ph-ico"><Icon name={m.kind === 'audio' ? 'music' : m.kind === 'image' ? 'image' : 'film'} /></span>}

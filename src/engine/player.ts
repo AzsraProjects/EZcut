@@ -151,6 +151,20 @@ export class Player {
     this.sources.set(clip.id, s);
     return s;
   }
+  /** Après une coupe, les deux moitiés lisent le même fichier à la suite : la seconde reprend le lecteur de la première,
+   *  déjà à la bonne image, au lieu d'en ouvrir un autre (qui reprendrait avec un temps de retard). */
+  private adopt(p: Project, clip: Clip, time: number, needed: Set<string>) {
+    if (this.sources.has(clip.id) || clip.still) return;
+    const url = p.media.find(m => m.id === clip.mediaId)?.url;
+    if (!url) return;
+    for (const [id, s] of this.sources) {
+      if (needed.has(id) || s.kind !== 'video' || s.url !== url) continue;
+      const el = s.el as HTMLVideoElement;
+      if (el.seeking || Math.abs(el.currentTime - time) > 0.25) continue;
+      this.sources.delete(id); this.sources.set(clip.id, s);
+      return;
+    }
+  }
   private dropSource(id: string) {
     const s = this.sources.get(id);
     if (!s) return;
@@ -195,6 +209,9 @@ export class Player {
   private syncVideo(p: Project, f: Frame | null, layers: Layer[], t: number) {
     const wants = f ? (f.b ? [f.a, f.b] : [f.a]) : [];
     const active = new Set<string>();
+    const needed = new Set([...wants.map(w => w.clip.id), ...layers.map(l => l.clip.id)]);
+    for (const w of wants) this.adopt(p, w.clip, w.time, needed);
+    for (const l of layers) if (!l.clip.text) this.adopt(p, l.clip, l.clip.in + l.local, needed);
     // Piste principale : le clip en cours donne l'heure, on ne le repositionne que sur demande.
     for (const w of wants) {
       const s = this.source(p, w.clip);
@@ -250,23 +267,35 @@ export class Player {
   }
 
   private syncAudio(p: Project, t: number) {
-    const all = [...p.audio, ...p.sound], active = new Set<string>();
-    for (const clip of [...(p.tracks.audio?.muted ? [] : activeAt(p.audio, t)), ...(p.tracks.sound?.muted ? [] : activeAt(p.sound, t))].filter(c => !c.off)) {
-      active.add(clip.id);
-      let a = this.audios.get(clip.id);
-      const media = p.media.find(m => m.id === clip.mediaId);
-      if (a && media && a.dataset.url !== media.url) { a.pause(); this.audios.delete(clip.id); a = undefined; }
-      if (!a && media?.url) { a = new Audio(media.url); a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(clip.id, a); }
-      if (!a) continue;
-      const local = t - clip.start, time = clip.in + local;
-      a.volume = clamp(clip.volume * fadeGain(clip, local), 0, 1); a.muted = this.muted;
-      if (this.playing) { if (a.paused) { if (Math.abs(a.currentTime - time) > 0.05) a.currentTime = time; a.play().catch(() => {}); } else if (this.jumped || Math.abs(a.currentTime - time) > 0.5) a.currentTime = time; }
-      else if (!a.paused) a.pause();
+    // Un lecteur par fichier et par piste, partagé par les clips qui en sont tirés : de part et d'autre d'une coupe,
+    // le son continue sans interruption ni reprise.
+    const wanted = new Set<string>(), active = new Set<string>();
+    for (const track of ['audio', 'sound'] as const) {
+      for (const c of p[track]) wanted.add(track + '|' + c.mediaId);
+      if (p.tracks[track]?.muted) continue;
+      for (const clip of activeAt(p[track], t)) {
+        if (clip.off) continue;
+        const key = track + '|' + clip.mediaId, media = p.media.find(m => m.id === clip.mediaId);
+        let a = this.audios.get(key);
+        if (a && media && a.dataset.url !== media.url) { a.pause(); this.audios.delete(key); a = undefined; }
+        if (!a && media?.url) { a = new Audio(media.url); a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(key, a); }
+        if (!a) continue;
+        active.add(key);
+        const local = t - clip.start, time = clip.in + local, off = Math.abs(a.currentTime - time);
+        a.volume = clamp(clip.volume * fadeGain(clip, local), 0, 1); a.muted = this.muted;
+        if (this.playing) {
+          if (a.paused) { if (off > 0.05) a.currentTime = time; a.play().catch(() => {}); }
+          // Un lecteur qui a pris du retard (chargement) ou de l'avance est recalé ; pas pendant qu'il se positionne déjà.
+          else if (!a.seeking && (this.jumped ? off > 0.05 : off > 0.15 && a.readyState >= 3)) a.currentTime = time;
+        } else {
+          if (!a.paused) a.pause();
+          if (!a.seeking && off > 0.05 && a.readyState >= 1) a.currentTime = time; // prêt à repartir du bon endroit
+        }
+      }
     }
-    const ids = new Set(all.map(c => c.id));
-    for (const [id, a] of this.audios) {
-      if (!ids.has(id)) { a.pause(); a.removeAttribute('src'); this.audios.delete(id); }
-      else if (!active.has(id) && !a.paused) a.pause();
+    for (const [key, a] of this.audios) {
+      if (!wanted.has(key)) { a.pause(); a.removeAttribute('src'); this.audios.delete(key); }
+      else if (!active.has(key) && !a.paused) a.pause();
     }
   }
 

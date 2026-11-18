@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { addOverlay, addSound, appendClip, isFree, isSound, moveClip, moveFree, patchClip, patchMarker, projectDuration, removeMarker, setTransition, startsOf, TRACKS, trimClip } from '../core/ops';
-import type { Clip, Marker, Project, TrackId } from '../core/types';
+import { addOverlay, addSound, appendClip, freeSlot, isFree, isSound, moveClip, moveFree, patchClip, patchMarker, projectDuration, removeMarker, setTransition, startsOf, TRACKS, trimClip } from '../core/ops';
+import { IMAGE_DURATION, type Clip, type Marker, type Project, type TrackId } from '../core/types';
 import { catalog } from '../effects/catalog';
 import { player } from '../engine/player';
 import { addMarkerAtPlayhead, applyItem, deleteSelection, selectClip, splitAtPlayhead, splitClipAt, toggleTrack } from './actions';
 import { openMenu } from './ContextMenu';
+import { dragging, endDrag } from './drag';
 import { Icon } from './Icon';
 import { menuForClip, menuForLane, menuForMarker, menuForRuler, menuForTransition } from './menus';
 import { useStore, type Tool } from './store';
@@ -12,15 +13,16 @@ import { subscribeTime, timecode } from './time';
 
 const st = () => useStore.getState();
 const HEAD = 164;
-const LANES: { id: TrackId; label: string; icon: string; hint: string; mute: boolean; hide: boolean }[] = [
-  { id: 'text', label: 'Titres', icon: 'type', hint: 'Choisissez un modèle dans l\'onglet Titres', mute: false, hide: true },
-  { id: 'overlay', label: 'Par-dessus', icon: 'layers', hint: 'Glissez ici une vidéo ou une image à poser par-dessus la vidéo (logo, image dans l\'image)', mute: true, hide: true },
-  { id: 'video', label: 'Vidéo', icon: 'film', hint: 'Piste principale : glissez une vidéo ou une image ici, ou cliquez dessus dans la bibliothèque', mute: true, hide: true },
-  { id: 'sound', label: 'Son', icon: 'vol', hint: 'Son détaché d\'une vidéo (clic droit sur un clip), voix, bruitages', mute: true, hide: false },
-  { id: 'audio', label: 'Musique', icon: 'music', hint: 'Glissez une musique ici', mute: true, hide: false },
+const LANES: { id: TrackId; label: string; icon: string; hint: string; mute: boolean; hide: boolean; h: number }[] = [
+  { id: 'text', label: 'Titres', icon: 'type', hint: 'Choisissez un modèle dans l\'onglet Titres', mute: false, hide: true, h: 34 },
+  { id: 'overlay', label: 'Par-dessus', icon: 'layers', hint: 'Glissez ici une vidéo ou une image à poser par-dessus la vidéo (logo, image dans l\'image)', mute: true, hide: true, h: 46 },
+  { id: 'video', label: 'Vidéo', icon: 'film', hint: 'Piste principale : glissez une vidéo ou une image ici, ou cliquez dessus dans la bibliothèque', mute: true, hide: true, h: 0 },
+  { id: 'sound', label: 'Son', icon: 'vol', hint: 'Son détaché d\'une vidéo (clic droit sur un clip), voix, bruitages', mute: true, hide: false, h: 40 },
+  { id: 'audio', label: 'Musique', icon: 'music', hint: 'Glissez une musique ici', mute: true, hide: false, h: 40 },
 ];
-/** Hauteur cumulée des pistes de taille fixe, pour donner le reste à la piste Vidéo. */
-const FIXED = 34 + 46 + 40 + 40;
+const LANE_MIN = 26, LANE_MAX = 320;
+/** Où l'élément glissé va se poser : sur quelle piste, à quel instant, pour quelle durée. insert = il s'insère entre deux clips, la suite est poussée. */
+interface Ghost { track: TrackId; start: number; dur: number; insert: boolean; }
 
 /** Pendant qu'on rogne le début d'un clip de la piste principale : décalage visuel des clips à partir de lui, pour que
  *  le bord saisi suive la souris. Au relâchement, le décalage disparaît et la suite se resserre. */
@@ -105,7 +107,7 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
   // Piste libre : le clip se déplace dans le temps en le faisant glisser ; un simple clic le sélectionne et y place la tête de lecture.
   const slide = (e: React.PointerEvent) => {
     if (!free || e.button !== 0) return;
-    const x0 = e.clientX, base = st().project, el = e.currentTarget as HTMLElement, pts = snapPoints(base, clip.id);
+    const x0 = e.clientX, base = st().project, pts = snapPoints(base, clip.id);
     let moved = false;
     capture(e, ev => {
       const dx = ev.clientX - x0;
@@ -120,7 +122,7 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
       }
       st().apply(() => moveFree(base, clip.id, want), false);
       onGuide(g);
-    }, ev => { onGuide(null); if (!moved) selectClip(clip.id, timeAt(el, ev.clientX)); });
+    }, () => { onGuide(null); if (!moved) st().select({ kind: 'clip', id: clip.id }); }); // un clic sélectionne sans déplacer la tête de lecture
   };
   // Outil lame : un clic coupe le clip à l'endroit cliqué.
   const cutHere = (e: React.PointerEvent) => { if (e.button !== 0) return; e.preventDefault(); splitClipAt(clip.id, timeAt(e.currentTarget as HTMLElement, e.clientX)); };
@@ -147,8 +149,8 @@ function ClipView({ clip, index, track, start, pps, project, shift, tool, onShif
       // La bande d'images glisse avec le point d'entrée : en rognant le début, on voit le contenu défiler sous le bord.
       style={{ left: (start + shift) * pps, width, backgroundImage: (track === 'video' || track === 'overlay') && strip ? `url("${strip}")` : undefined, backgroundPositionX: clip.still ? 0 : -clip.in * pps }}
       onContextMenu={e => { e.stopPropagation(); openMenu(e, menuForClip(clip.id)); }}
-      onClick={free || razor ? undefined : e => selectClip(clip.id, timeAt(e.currentTarget, e.clientX))} onPointerDown={razor ? cutHere : slide} onKeyDown={e => { if (e.key === 'Enter') selectClip(clip.id); }}
-      onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-clip', clip.id); e.dataTransfer.effectAllowed = 'move'; }}
+      onClick={free || razor ? undefined : () => st().select({ kind: 'clip', id: clip.id })} onPointerDown={razor ? cutHere : slide} onKeyDown={e => { if (e.key === 'Enter') st().select({ kind: 'clip', id: clip.id }); }}
+      onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-clip', clip.id); e.dataTransfer.effectAllowed = 'move'; dragging.clip = clip.id; }} onDragEnd={endDrag}
       onDragOver={e => { if (e.dataTransfer.types.some(t => t.startsWith('application/x-ezcut'))) e.preventDefault(); }} onDrop={onDrop}>
       {fin > 0 && <span className="fade in" style={{ width: fin * pps }} />}
       {fout > 0 && <span className="fade out" style={{ width: fout * pps }} />}
@@ -175,6 +177,8 @@ export function Timeline({ height }: { height: number }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [trimShift, setTrimShift] = useState<TrimShift | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
+  const [ghost, setGhost] = useState<Ghost | null>(null);
+  const laneH = useStore(s => s.layout.laneH);
   const total = projectDuration(project), span = Math.max(30, total + 10), width = span * pps;
   const count = project.video.length + project.audio.length + project.sound.length + project.overlay.length + project.text.length;
 
@@ -286,8 +290,44 @@ export function Timeline({ height }: { height: number }) {
     } else if (moved && !isFree(track)) { e.preventDefault(); st().apply(q => (q[track].some(c => c.id === moved) ? moveClip(q, moved, q[track].length) : q)); }
   };
   const allow = (e: React.DragEvent) => { if (e.dataTransfer.types.some(t => t.startsWith('application/x-ezcut'))) e.preventDefault(); };
-  // Clic dans le vide d'une piste : désélectionne et place la tête de lecture à cet endroit.
-  const clickLane = (e: React.MouseEvent) => { if (e.target !== e.currentTarget) return; st().select(null); player.pause(); player.seek((e.clientX - e.currentTarget.getBoundingClientRect().left) / pps); };
+  // Clic dans le vide d'une piste : désélectionne. La tête de lecture ne se déplace que depuis la règle.
+  const clickLane = (e: React.MouseEvent) => { if (e.target === e.currentTarget) st().select(null); };
+
+  // Pendant qu'on glisse un média ou un clip au-dessus d'une piste : où il va se poser, et la place qu'il prendra.
+  const preview = (track: TrackId) => (e: React.DragEvent) => {
+    allow(e);
+    const p = st().project, at = Math.max(0, (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps);
+    let g: Ghost | null = null;
+    const boundary = (skip?: string) => { // coupe de la piste principale la plus proche du pointeur, par les milieux des clips
+      const starts = startsOf(p, 'video'), i = p.video.filter((c, k) => c.id !== skip && starts[k] + c.dur / 2 < at).length, list = p.video.filter(c => c.id !== skip);
+      return list.slice(0, i).reduce((s, c) => s + c.dur, 0);
+    };
+    if (!p.tracks[track]?.locked) {
+      const m = dragging.media ? p.media.find(x => x.id === dragging.media) : null;
+      if (m && track !== 'text' && (m.kind === 'audio') === isSound(track)) {
+        const dur = m.kind === 'image' ? IMAGE_DURATION : Math.max(0.1, m.duration);
+        g = track === 'video' ? { track, start: boundary(), dur, insert: true } : { track, start: freeSlot(p[track], dur, at), dur, insert: false };
+      } else if (dragging.clip && track === 'video') {
+        const c = p.video.find(x => x.id === dragging.clip);
+        if (c) g = { track, start: boundary(c.id), dur: c.dur, insert: true };
+      }
+    }
+    setGhost(old => (old && g && old.track === g.track && old.start === g.start && old.dur === g.dur ? old : g));
+  };
+  useEffect(() => { const clear = () => { setGhost(null); endDrag(); }; addEventListener('dragend', clear); addEventListener('drop', clear); return () => { removeEventListener('dragend', clear); removeEventListener('drop', clear); }; }, []);
+
+  // Hauteur des pistes : celle choisie par l'utilisateur, sinon la hauteur par défaut ; la piste Vidéo prend la place restante.
+  const fixed = LANES.reduce((s, l) => s + (laneH[l.id] ?? l.h), 0);
+  const heightOf = (l: typeof LANES[number]) => laneH[l.id] ?? (l.h || Math.max(44, height - 39 - 24 - fixed - 20));
+  const resizeLane = (l: typeof LANES[number]) => (e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const el = e.currentTarget as HTMLElement, y0 = e.clientY, h0 = heightOf(l);
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => st().setLayout({ laneH: { ...st().layout.laneH, [l.id]: Math.round(Math.max(LANE_MIN, Math.min(LANE_MAX, h0 + ev.clientY - y0))) } });
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  };
+  const resetLane = (id: TrackId) => { const next = { ...st().layout.laneH }; delete next[id]; st().setLayout({ laneH: next }); };
   const timeOf = (e: React.MouseEvent) => Math.max(0, (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps);
 
   const step = pps >= 80 ? 1 : pps >= 40 ? 2 : pps >= 16 ? 5 : pps >= 8 ? 10 : 30;
@@ -297,7 +337,7 @@ export function Timeline({ height }: { height: number }) {
   const markers = [...project.markers].sort((a, b) => (a.id < b.id ? -1 : 1));
 
   return (
-    <section className={tool === 'razor' ? 'tl razor' : 'tl'} style={{ height, ['--lane-v' as string]: `${Math.max(44, height - 39 - 24 - FIXED - 14)}px` }}>
+    <section className={tool === 'razor' ? 'tl razor' : 'tl'} style={{ height }}>
       <div className="tools">
         <button className="ib" aria-pressed={tool === 'select'} title="Outil de sélection (V)" aria-label="Outil de sélection" onClick={() => st().set({ tool: 'select' })}><Icon name="cursor" /></button>
         <button className="ib" aria-pressed={tool === 'razor'} title="Outil lame : chaque clic sur un clip le coupe à cet endroit (C)" aria-label="Outil lame" onClick={() => { st().set({ tool: 'razor' }); st().notify('Outil lame : cliquez sur un clip pour le couper. Échap ou V pour revenir à la sélection.'); }}><Icon name="razor" /></button>
@@ -317,13 +357,14 @@ export function Timeline({ height }: { height: number }) {
             {LANES.map(l => {
               const ts = project.tracks[l.id] ?? {};
               return (
-                <div key={l.id} className={`th ${l.id}`} title={l.hint}>
+                <div key={l.id} className={`th ${l.id}`} title={l.hint} style={{ height: heightOf(l) }}>
                   <Icon name={l.icon} /><span className="tlabel">{l.label}</span>
                   <span className="tbtns">
                     {l.mute ? <button aria-pressed={!!ts.muted} title={ts.muted ? 'Rétablir le son de la piste' : 'Couper le son de la piste'} aria-label={`Couper le son de la piste ${l.label}`} onClick={() => toggleTrack(l.id, 'muted')}><Icon name={ts.muted ? 'mute' : 'vol'} /></button> : <span />}
                     {l.hide ? <button aria-pressed={!!ts.hidden} title={ts.hidden ? 'Afficher la piste' : 'Masquer la piste : elle n\'apparaît plus dans l\'aperçu ni à l\'export'} aria-label={`Masquer la piste ${l.label}`} onClick={() => toggleTrack(l.id, 'hidden')}><Icon name={ts.hidden ? 'eyeoff' : 'eye'} /></button> : <span />}
                     <button aria-pressed={!!ts.locked} title={ts.locked ? 'Déverrouiller la piste' : 'Verrouiller la piste : ses clips ne peuvent plus être modifiés'} aria-label={`Verrouiller la piste ${l.label}`} onClick={() => toggleTrack(l.id, 'locked')}><Icon name={ts.locked ? 'lock' : 'unlock'} /></button>
                   </span>
+                  <span className="thr" title="Tirez pour changer la hauteur de la piste (double-clic : hauteur par défaut)" onPointerDown={resizeLane(l)} onDoubleClick={() => resetLane(l.id)} />
                 </div>
               );
             })}
@@ -339,9 +380,10 @@ export function Timeline({ height }: { height: number }) {
             {LANES.map(l => {
               const starts = startsOf(project, l.id), ts = project.tracks[l.id] ?? {};
               return (
-                <div key={l.id} className={`lane ${l.id}${ts.locked ? ' locked' : ''}${ts.hidden ? ' hidden' : ''}${ts.muted ? ' muted' : ''}`} onDragOver={allow} onDrop={dropOnLane(l.id)} onClick={clickLane}
+                <div key={l.id} className={`lane ${l.id}${ts.locked ? ' locked' : ''}${ts.hidden ? ' hidden' : ''}${ts.muted ? ' muted' : ''}`} style={{ height: heightOf(l) }} onDragOver={preview(l.id)} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setGhost(null); }} onDrop={dropOnLane(l.id)} onClick={clickLane}
                   onContextMenu={e => openMenu(e, menuForLane(l.id, timeOf(e)))}>
                   {project[l.id].length === 0 && <span className="lane-empty">{l.hint}</span>}
+                  {ghost?.track === l.id && <i className={ghost.insert ? 'ghost insert' : 'ghost'} style={{ left: ghost.start * pps, width: Math.max(3, ghost.dur * pps) }}><b>{ghost.insert ? 'S\'insère ici · ' : ''}{ghost.dur.toFixed(1)} s</b></i>}
                   {project[l.id].map((c, i) => <ClipView key={c.id} clip={c} index={i} track={l.id} start={starts[i]} pps={pps} project={project} tool={tool}
                     shift={l.id === 'video' && trimShift && i >= trimShift.index ? trimShift.seconds : 0} onShift={setTrimShift} onGuide={setGuide} />)}
                   {l.id === 'video' && !trimShift && project.video.slice(0, -1).map((c, i) => {
