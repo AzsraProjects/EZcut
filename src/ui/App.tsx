@@ -5,7 +5,7 @@ import { ez } from '../desktop/api';
 import { catalog, defaultsOf, loadCatalog, transitionDefaults } from '../effects/catalog';
 import { player } from '../engine/player';
 import { exportProject } from '../export/exporter';
-import { deleteSelection, newProject, openProject, saveProject, splitAtPlayhead } from './actions';
+import { deleteSelection, loadProject, newProject, openProject, saveProject, serialise, splitAtPlayhead } from './actions';
 import { ExportDialog } from './ExportDialog';
 import { Icon } from './Icon';
 import { Inspector } from './Inspector';
@@ -34,7 +34,7 @@ async function runAutoTest() {
     st().apply(p => addText(p, { ...defaultText(), content: 'EZcut', animIn: 'pop' }, 0.5).project);
     const ov = addOverlay(st().project, media[media.length - 1].id, 1);
     if (ov) st().apply(() => patchClip(ov.project, ov.clipId, c => { c.dur = Math.min(c.dur, 2); c.fadeIn = 0.5; c.opacity = 0.8; }));
-    const r = await exportProject(st().project, { height: 720, fps: 30 }, () => {}, () => false, cfg.out);
+    const r = await exportProject(st().project, { height: cfg.height ?? 720, fps: 30, codec: cfg.codec }, () => {}, () => false, cfg.out);
     done({ ...r, clips: st().project.video.length, fx: fx?.id, transition: tr?.id, effects: catalog.effects.length, filters: catalog.filters.length, transitions: catalog.transitions.length });
   } catch (e) { done({ ok: false, error: String((e as Error).stack ?? e) }); }
 }
@@ -48,6 +48,7 @@ export function App() {
   const canRedo = useStore(s => s.future.length > 0);
   const exportOpen = useStore(s => s.exportOpen);
   const L = useStore(s => s.layout);
+  const [recovered, setRecovered] = useState<{ savedAt: number; json: string } | null>(null);
   const drag = useRef(0);
 
   useEffect(() => {
@@ -59,8 +60,26 @@ export function App() {
     let pending = 0;
     player.onSourceReady = () => { clearTimeout(pending); pending = window.setTimeout(() => st().set({ thumbEpoch: st().thumbEpoch + 1 }), 120); };
     try { player.init(); } catch { st().notify('WebGL2 est indisponible : l\'aperçu ne peut pas s\'afficher.'); }
-    loadCatalog().then(() => { st().set({ catalogReady: true }); void runAutoTest(); }).catch(() => st().notify('La banque d\'effets n\'a pas pu être chargée.'));
-    const unsub = useStore.subscribe(s => { player.targetClipId = s.sel?.kind === 'clip' ? s.sel.id : null; });
+    loadCatalog().then(async () => {
+      st().set({ catalogReady: true });
+      void runAutoTest();
+      // Un projet non enregistré d'une session précédente (plantage, coupure) est proposé à la restauration.
+      const saved = await ez?.autosaveRead();
+      if (saved) setRecovered(saved);
+    }).catch(() => st().notify('La banque d\'effets n\'a pas pu être chargée.'));
+    const unsub = useStore.subscribe((s, prev) => {
+      player.targetClipId = s.sel?.kind === 'clip' ? s.sel.id : null;
+      if (s.dirty !== prev.dirty) { void ez?.setDirty(s.dirty); if (!s.dirty) void ez?.autosaveClear(); }
+    });
+    // Sauvegarde automatique : toutes les 20 secondes, seulement si le projet a changé depuis la dernière.
+    let lastSaved: unknown = null;
+    const autosave = window.setInterval(() => {
+      const s = st();
+      if (!ez || !s.dirty || s.project === lastSaved || s.exportOpen) return;
+      lastSaved = s.project;
+      void ez.autosaveWrite(serialise(s.project));
+    }, 20000);
+    ez?.onSaveAndClose(async () => { if (await saveProject()) await ez!.closeWindow(); });
 
     const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
     const onKey = (e: KeyboardEvent) => {
@@ -84,7 +103,7 @@ export function App() {
     const onDrop = (e: DragEvent) => { if (e.dataTransfer?.files.length) { e.preventDefault(); void importFiles([...e.dataTransfer.files]).then(m => { if (m.length) st().setTab('media'); }); } };
     addEventListener('keydown', onKey); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
     addEventListener('dragover', onDragOver); addEventListener('drop', onDrop);
-    return () => { unsub(); removeEventListener('keydown', onKey); removeEventListener('keyup', onKeyUp); removeEventListener('blur', onBlur); removeEventListener('dragover', onDragOver); removeEventListener('drop', onDrop); };
+    return () => { unsub(); clearInterval(autosave); removeEventListener('keydown', onKey); removeEventListener('keyup', onKeyUp); removeEventListener('blur', onBlur); removeEventListener('dragover', onDragOver); removeEventListener('drop', onDrop); };
   }, []);
 
   useEffect(() => { document.documentElement.classList.toggle('ez-light', light); }, [light]);
@@ -146,6 +165,18 @@ export function App() {
         <Timeline height={Math.min(L.tlH, Math.max(150, innerHeight - 260))} />
       </>}
       {exportOpen && <ExportDialog />}
+      {recovered && (
+        <div className="modal" role="dialog" aria-modal="true" aria-label="Projet retrouvé">
+          <div className="dialog">
+            <header><b>Projet non enregistré retrouvé</b></header>
+            <p>EZcut s'est fermé avec un projet en cours. Une sauvegarde automatique du {new Date(recovered.savedAt).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' })} est disponible.</p>
+            <footer>
+              <button className="btn" onClick={() => { void ez?.autosaveClear(); setRecovered(null); }}>Ignorer</button>
+              <button className="btn primary" onClick={() => { const r = recovered; setRecovered(null); void loadProject(r.json, null, true); }}>Restaurer</button>
+            </footer>
+          </div>
+        </div>
+      )}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );

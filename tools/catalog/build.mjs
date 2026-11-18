@@ -12,6 +12,10 @@ const out = path.resolve(here, '../../public/catalog/effets.json');
 const curFile = path.join(here, 'curation.json');
 const cur = flag !== '--all' && fs.existsSync(curFile) ? JSON.parse(fs.readFileSync(curFile, 'utf8')) : { exclude: [], preview: {}, temporal: [] };
 const excl = new Set(cur.exclude);
+const selFile = path.join(here, 'selection.json');
+const selection = fs.existsSync(selFile) ? JSON.parse(fs.readFileSync(selFile, 'utf8')) : { hidden: [], featured: [] };
+const hidden = new Set(flag !== '--all' ? selection.hidden : []);
+const featured = new Map((selection.featured || []).map((id, i) => [id, i]));
 const TOOLS = new Set(['isf:Color Controls']); // réglages intégrés à l'inspecteur, hors banque
 const FILTER_CATS = /^(Color Effect|Color Adjustment|Film|v002)$/;
 const EFFECT_CATS = /^(Glitch|Distortion Effect|Distortion|Blur|Feedback|Tile Effect|Kaleidoscope|Geometry Adjustment|Halftone Effect|Noise|Stylize|Sharpen)$/;
@@ -28,6 +32,7 @@ for (const SRC of SOURCES) for (const f of fs.readdirSync(SRC.dir).filter(f => f
   const isfDir = SRC.dir;
   const name = f.slice(0, -3), id = SRC.prefix + name, tool = TOOLS.has(id);
   if (excl.has(id) && !tool) { skip('excluded-by-test', name); continue; }
+  if (hidden.has(id)) { skip('hidden-by-selection', name); continue; }
   const src = fs.readFileSync(path.join(isfDir, f), 'utf8');
   const m = src.match(/\/\*([\s\S]*?)\*\//);
   if (!m) { skip('no-header', name); continue; }
@@ -49,7 +54,7 @@ for (const SRC of SOURCES) for (const f of fs.readdirSync(SRC.dir).filter(f => f
     passes: meta.PASSES || [],
     fs: src.slice(m.index + m[0].length),
     vs: fs.existsSync(vsPath) ? fs.readFileSync(vsPath, 'utf8') : null,
-    preview: cur.preview[id] || null, temporal: cur.temporal.includes(id),
+    preview: cur.preview[id] || null, thumb: (selection.thumb || {})[id] || null, temporal: cur.temporal.includes(id),
     license: SRC.license, source: SRC.source,
   });
 }
@@ -58,6 +63,7 @@ const transitions = [];
 for (const f of fs.readdirSync(gltDir).filter(f => f.endsWith('.glsl')).sort()) {
   const name = f.slice(0, -5), id = 'glt:' + name;
   if (excl.has(id)) { skip('excluded-by-test', name); continue; }
+  if (hidden.has(id)) { skip('hidden-by-selection', name); continue; }
   const src = fs.readFileSync(path.join(gltDir, f), 'utf8');
   const lic = (src.match(/^\/\/\s*License\s*:\s*(.+)$/mi) || [])[1]?.trim();
   if (!lic) { skip('no-license', name); continue; }
@@ -66,16 +72,21 @@ for (const f of fs.readdirSync(gltDir).filter(f => f.endsWith('.glsl')).sort()) 
   const re = /^\s*uniform\s+(float|int|bool|vec2|vec3|vec4|ivec2)\s+(\w+)\s*;\s*(?:\/\/\s*=\s*(.*))?$/gm;
   let u;
   while ((u = re.exec(src))) {
-    const nums = (u[3] || '').match(/-?\d*\.?\d+(?:e-?\d+)?|true|false/gi) || [];
+    // Le chiffre de « vec3 » ou « ivec2 » n'est pas une valeur : sans ce nettoyage, vec3(0.0) devenait (3, 0, 0), soit du rouge vif.
+    const nums = (u[3] || '').split(';')[0].replace(/[ib]?vec[234]/g, '').match(/-?\d*\.?\d+(?:e-?\d+)?|true|false/gi) || [];
     params.push({ type: u[1], name: u[2], def: nums.map(n => n === 'true' ? 1 : n === 'false' ? 0 : parseFloat(n)) });
   }
   const tags = ((src.match(/^\/\/\s*Tags?\s*:\s*(.+)$/mi) || [])[1] || '').toLowerCase().split(/[,\s]+/).filter(Boolean);
   transitions.push({
-    id, name, tags, credit: (src.match(/^\/\/\s*Author\s*:\s*(.+)$/mi) || [])[1]?.trim() || '',
+    id, name, tags, featured: featured.has(id), credit: (src.match(/^\/\/\s*Author\s*:\s*(.+)$/mi) || [])[1]?.trim() || '',
     params, src, license: lic, source: 'gl-transitions/gl-transitions',
   });
 }
 
+// Les transitions essentielles d'abord, dans l'ordre choisi ; les autres par ordre alphabétique.
+transitions.sort((a, b) => (featured.get(a.id) ?? 1e6) - (featured.get(b.id) ?? 1e6) || a.name.localeCompare(b.name));
+const missing = [...featured.keys()].filter(id => !transitions.some(t => t.id === id));
+if (missing.length) console.log(' sélection : introuvables →', missing.join(', '));
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, JSON.stringify({ effects, transitions }));
 const k = effects.reduce((a, e) => (a[e.kind] = (a[e.kind] || 0) + 1, a), {});

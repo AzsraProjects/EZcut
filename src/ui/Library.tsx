@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Media } from '../core/types';
-import type { CatItem } from '../effects/catalog';
+import { FEATURED, type CatItem } from '../effects/catalog';
 import { player, TH, TW } from '../engine/player';
 import { animState, drawText } from '../engine/text';
 import { addTitle, addToTimeline, applyItem, catalogList } from './actions';
@@ -105,7 +105,7 @@ export function Library() {
   const cats = useMemo(() => {
     const n: Record<string, number> = {};
     list.forEach(it => it.cat.forEach(c => { n[c] = (n[c] ?? 0) + 1; }));
-    return Object.entries(n).sort((a, b) => a[0].localeCompare(b[0], 'fr'));
+    return Object.entries(n).sort((a, b) => Number(b[0] === FEATURED) - Number(a[0] === FEATURED) || a[0].localeCompare(b[0], 'fr'));
   }, [list]);
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();

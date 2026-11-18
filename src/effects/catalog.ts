@@ -7,12 +7,15 @@ export interface CatEffect extends EffectDef {
   cats: string[]; credit: string; desc: string; license: string; source: string;
   /** Valeurs appliquées à la pose quand les réglages par défaut du shader ne changent rien à l'image. */
   preview: Params | null;
+  /** Réglages accentués, pour la vignette fixe de la banque uniquement. */
+  thumb?: Params | null;
   temporal: boolean;
   by: string; cat: string[]; label: string;
 }
 export interface CatTransition extends TransitionDef {
   kind: 'transition';
   tags: string[]; credit: string; license: string; source: string;
+  featured?: boolean;
   by: string; cat: string[]; label: string;
 }
 export type CatItem = CatEffect | CatTransition;
@@ -29,6 +32,9 @@ const TR_CATS: Record<string, string> = {
   organic: 'Organique', paper: 'Organique', shape: 'Formes',
 };
 const COLOR_LABELS: Record<string, string> = { bright: 'Luminosité', contrast: 'Contraste', hue: 'Teinte', saturation: 'Saturation' };
+
+/** Catégorie des transitions mises en avant, toujours affichée en premier. */
+export const FEATURED = 'Essentielles';
 
 export const catalog = {
   ready: false,
@@ -58,6 +64,7 @@ export async function loadCatalog(url = './catalog/effets.json'): Promise<void> 
     t.label = t.name.replace(/([a-z])([A-Z0-9])/g, '$1 $2');
     t.cat = uniq((t.tags ?? []).map(x => TR_CATS[x]).filter(Boolean));
     if (!t.cat.length) t.cat = ['Autres'];
+    if (t.featured) t.cat.unshift(FEATURED);
     catalog.byId.set(t.id, t);
   }
   catalog.color = d.effects.find(e => e.kind === 'tool' && e.id === 'isf:Color Controls') ?? null;

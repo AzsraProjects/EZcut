@@ -15,6 +15,8 @@ import { Engine } from '/src/engine/gl.ts';
   const run = (e, key, params, moving) => { const p = E.compileEffect(e); if (!p.ok) return null; for (let f = 0; f < 5; f++) E.renderEffect(p, moving && f < 3 ? tb : ta, W, H, null, { time: 1 + f / 30, frame: f, key, params }); return stat(E.readPixels(W, H, null)); };
   const cur = { exclude: [], preview: {}, temporal: [], log: [] };
   for (const e of d.effects) {
+    // Effets écrits pour EZcut : jamais écartés ni réglés automatiquement ; une erreur de compilation est signalée avec son message.
+    if (e.id.startsWith('ez:')) { const p = E.compileEffect(e); if (!p.ok) { cur.exclude.push(e.id); cur.log.push(e.name + ': compile — ' + p.err); } else { try { run(e, 'z'); } catch (x) { cur.log.push(e.name + ': rendu — ' + x.message); } const ge = E.gl.getError(); if (ge) cur.log.push(e.name + ': erreur GL ' + ge); } continue; }
     const s = run(e, 'a');
     if (!s) { cur.exclude.push(e.id); cur.log.push(e.name + ': compile'); continue; }
     if (s[0] < 4) { cur.exclude.push(e.id); cur.log.push(e.name + ': black'); continue; }

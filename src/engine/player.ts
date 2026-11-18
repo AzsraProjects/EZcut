@@ -52,7 +52,10 @@ export class Player {
   private sets = new Map<string, TargetSet>();
   private sample: { a: WebGLTexture; b: WebGLTexture; w: number; h: number } | null = null;
   private queue: { item: CatItem; ctx: CanvasRenderingContext2D }[] = [];
+  /** Instant le plus parlant de chaque effet pour sa vignette fixe. */
+  private bestTime = new Map<string, number>();
   private frameNo = 0;
+  private fps = 30;
   private last = 0;
   private started = false;
   /** Vrai entre un déplacement de la tête de lecture et la synchronisation suivante. */
@@ -266,7 +269,8 @@ export class Player {
     if (!ch.length) { this.engine.blit(src, w, h, out); return; }
     ch.forEach((c, i) => {
       const o = i === ch.length - 1 ? out : set.ping[i % 2];
-      this.engine.renderEffect(c.p, src, w, h, o, { time, progress, frame: this.frameNo, key: c.key, params: c.params });
+      // Numéro d'image déduit du temps du clip : un effet tiré au hasard par image (grain) donne le même résultat à l'aperçu et à l'export.
+      this.engine.renderEffect(c.p, src, w, h, o, { time, progress, frame: Math.round(time * this.fps), key: c.key, params: c.params });
       if (o) src = o.tex;
     });
   }
@@ -358,8 +362,29 @@ export class Player {
       this.engine.renderTransition(pr, a, b, live ? clamp((now % 2.2) / 1.5, 0, 1) : 0.5, TW, TH, null);
     } else {
       const pr = this.fxProg(item.id); if (!pr) return;
-      const n = live ? 1 : 4;
-      for (let k = 0; k < n; k++) this.engine.renderEffect(pr, a, TW, TH, null, { time: live ? now % 4 : 1 + k / 30, progress: live ? (now % 4) / 4 : 0.6, frame: this.frameNo + k, key: live ? 'hv' : 'th', params: this.previewParams(item) });
+      const params = this.previewParams(item);
+      if (live) this.engine.renderEffect(pr, a, TW, TH, null, { time: now % 4, progress: (now % 4) / 4, frame: this.frameNo, key: 'hv', params });
+      else {
+        // Vignette fixe : parmi quelques instants du clip, on garde celui où l'effet se voit le plus
+        // (un fondu, une secousse ou un zoom d'entrée sont invisibles à un instant pris au hasard).
+        const still = item.thumb ? { ...params, ...item.thumb } : params;
+        const shot = (time: number) => { for (let k = 0; k < 3; k++) this.engine.renderEffect(pr, a, TW, TH, null, { time: time + k / 30, progress: time / 4, frame: Math.round(time * 30) + k, key: 'th', params: still }); };
+        let best = this.bestTime.get(item.id);
+        if (best === undefined) {
+          this.engine.blit(a, TW, TH, null);
+          const ref = this.engine.readPixels(TW, TH, null);
+          let top = -1; best = 1;
+          for (const time of [1, 0.12, 0.45, 2.2, 3.6]) {
+            shot(time);
+            const px = this.engine.readPixels(TW, TH, null);
+            let d = 0, lum = 0;
+            for (let i = 0; i < px.length; i += 16) { d += Math.abs(px[i] - ref[i]) + Math.abs(px[i + 1] - ref[i + 1]) + Math.abs(px[i + 2] - ref[i + 2]); lum += px[i] + px[i + 1] + px[i + 2]; }
+            if (lum > px.length / 16 * 18 && d > top * 1.25) { top = d; best = time; } // une image presque noire n'est pas représentative
+          }
+          this.bestTime.set(item.id, best);
+        }
+        shot(best);
+      }
     }
     this.engine.present(ctx, TW, TH);
   }
@@ -373,7 +398,10 @@ export class Player {
     this.frameNo++;
     if (this.frameNo % 600 === 0) this.collect();
     const p = this.getProject(), total = projectDuration(p);
+    this.fps = p.fps;
     if (this.t > total) this.t = total;
+    // Après un déplacement, les effets à mémoire (écho, traînées) repartent de zéro plutôt que de mêler deux instants.
+    if (this.jumped) for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect' && pr.def.passes?.some(x => (x as { PERSISTENT?: unknown; persistent?: unknown }).PERSISTENT || (x as { persistent?: unknown }).persistent)) this.engine.releaseState(pr, 'v');
 
     // dimensions de l'aperçu selon le format du projet
     const vw = Math.max(TW, Math.round(PREVIEW_H * p.width / p.height / 2) * 2);
@@ -462,7 +490,7 @@ export class Player {
       if (el.videoWidth) { this.engine.upload(s.tex, el); s.w = el.videoWidth; s.h = el.videoHeight; s.loaded = true; }
     }
     const set = this.set(w, h);
-    this.frameNo = Math.round(t * p.fps); // numéro d'image stable, indépendant de la vitesse de rendu
+    this.fps = p.fps;
     this.compose(f, layers, w, h, set.out, 'x', t);
     return this.engine.readPixels(w, h, set.out, into);
   }

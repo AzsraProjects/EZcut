@@ -4,7 +4,7 @@ import type { Clip, Project } from '../core/types';
 import { ez, type AudioSegment } from '../desktop/api';
 import { player } from '../engine/player';
 
-export interface ExportOptions { height: number; fps: number; }
+export interface ExportOptions { height: number; fps: number; codec?: 'h264' | 'hevc'; software?: boolean; }
 export interface ExportResult { ok: boolean; path?: string; error?: string; cancelled?: boolean; frames?: number; seconds?: number; }
 
 /** Plan audio : une suite de segments par piste (clips vidéo, musique, incrustations). Images, vidéos muettes et trous deviennent des silences. */
@@ -34,7 +34,7 @@ export async function exportProject(p: Project, opts: ExportOptions, onProgress:
   const duration = projectDuration(p), frames = Math.max(1, Math.round(duration * opts.fps));
   if (!duration) return { ok: false, error: 'La timeline est vide.' };
   const { width, height } = exportSize(p, opts.height);
-  const started = await ez.exportStart({ width, height, fps: opts.fps, frames, name: p.name, audio: audioPlan(p), outPath });
+  const started = await ez.exportStart({ width, height, fps: opts.fps, frames, name: p.name, audio: audioPlan(p), codec: opts.codec, software: opts.software, outPath });
   if (!started.ok) return started.error ? { ok: false, error: started.error } : { ok: false, cancelled: true };
 
   const t0 = performance.now(), wasT = player.t;

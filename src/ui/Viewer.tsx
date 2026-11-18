@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { projectDuration, trackStarts } from '../core/ops';
+import { findClip, patchClip, projectDuration, trackStarts } from '../core/ops';
 import { player } from '../engine/player';
 import { Icon } from './Icon';
 import { useStore } from './store';
@@ -15,6 +15,28 @@ export function Viewer() {
   const [muted, setMuted] = useState(false);
 
   useEffect(() => { player.setView(canvas.current); return () => player.setView(null); }, []);
+  const movable = useStore(s => { const f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return !!f && f.track !== 'audio'; });
+
+  // Dans l'aperçu, le clip sélectionné se déplace à la souris et se redimensionne à la molette.
+  const target = () => { const s = useStore.getState(), f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return f && f.track !== 'audio' ? f.clip : null; };
+  const drag = (e: React.PointerEvent) => {
+    const clip = target(), el = e.currentTarget as HTMLElement;
+    if (!clip || e.button !== 0) return;
+    const s = useStore.getState(), p = s.project, r = el.getBoundingClientRect(), ar = p.width / p.height;
+    const dw = Math.min(r.width, r.height * ar), dh = dw / ar; // taille réelle de l'image affichée dans le canvas
+    const x0 = e.clientX, y0 = e.clientY, tx = clip.transform.x, ty = clip.transform.y, id = clip.id;
+    s.checkpoint(); el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => useStore.getState().apply(q => patchClip(q, id, c => { c.transform.x = Math.max(-1.5, Math.min(1.5, tx + (ev.clientX - x0) / dw)); c.transform.y = Math.max(-1.5, Math.min(1.5, ty - (ev.clientY - y0) / dh)); }), false);
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  };
+  const wheel = (e: React.WheelEvent) => {
+    const clip = target();
+    if (!clip) return;
+    const s = useStore.getState(), id = clip.id;
+    s.checkpoint();
+    s.apply(q => patchClip(q, id, c => { c.transform.scale = Math.max(0.05, Math.min(8, c.transform.scale * (e.deltaY < 0 ? 1.05 : 1 / 1.05))); }), false);
+  };
   useEffect(() => subscribeTime(t => { if (cur.current) cur.current.textContent = timecode(t, fps); }), [fps]);
 
   const jump = (dir: -1 | 1) => {
@@ -26,7 +48,7 @@ export function Viewer() {
   return (
     <section className="viewer">
       <div className="stage">
-        <canvas ref={canvas} width={960} height={540} />
+        <canvas ref={canvas} width={960} height={540} className={movable ? 'movable' : undefined} onPointerDown={drag} onWheel={wheel} title={movable ? 'Glisser pour déplacer le clip sélectionné, molette pour le redimensionner' : undefined} />
         {empty && <div className="stage-empty">Importez un média puis ajoutez-le à la timeline pour commencer.</div>}
       </div>
       <div className="transport">

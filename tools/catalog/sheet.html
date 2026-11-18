@@ -1,0 +1,31 @@
+<!doctype html><meta charset="utf-8"><title>EZcut — planche-contact du catalogue</title>
+<!-- Outil de tri : http://localhost:5173/tools/catalog/sheet.html?kind=effect|filter|transition&page=0
+     Affiche chaque entrée du catalogue telle qu'elle apparaît dans la banque, pour juger à l'œil ce qui mérite d'y rester. -->
+<style>
+  body{margin:0;background:#111;color:#ddd;font:10px/1.2 system-ui}
+  #g{display:grid;grid-template-columns:repeat(12,1fr);gap:4px;padding:4px}
+  figure{margin:0;min-width:0} canvas{width:100%;display:block;background:#000}
+  figcaption{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0 3px}
+</style>
+<div id="g"></div>
+<script type="module">
+import { Engine } from '/src/engine/gl.ts';
+const q = new URLSearchParams(location.search), kind = q.get('kind') || 'effect', page = +(q.get('page') || 0), PER = 108, W = 240, H = 135;
+const d = await (await fetch('/catalog/effets.json')).json();
+const load = s => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = s; });
+const [a, b] = await Promise.all([load('/sample/poster-a.jpg'), load('/sample/poster-b.jpg')]);
+const glc = document.createElement('canvas'); glc.width = W; glc.height = H;
+const E = new Engine(glc), ta = E.createTexture(), tb = E.createTexture(); E.upload(ta, a); E.upload(tb, b);
+const list = (kind === 'transition' ? d.transitions : d.effects.filter(e => e.kind === kind)).slice(page * PER, (page + 1) * PER);
+const g = document.getElementById('g');
+list.forEach((e, n) => {
+  const f = document.createElement('figure'), c = document.createElement('canvas'); c.width = W; c.height = H;
+  f.append(c, Object.assign(document.createElement('figcaption'), { textContent: (page * PER + n + 1) + ' ' + e.name }));
+  g.append(f);
+  if (kind === 'transition') { const p = E.compileTransition(e); if (p.ok) E.renderTransition(p, ta, tb, 0.5, W, H, null); }
+  else { const p = E.compileEffect(e); if (p.ok) for (let k = 0; k < 6; k++) E.renderEffect(p, e.temporal && k < 3 ? tb : ta, W, H, null, { time: 1 + k / 30, progress: 0.6, frame: k, key: 's', params: e.preview || {} }); }
+  c.getContext('2d').drawImage(glc, 0, 0);
+});
+document.title = 'planche ' + kind + ' ' + page + ' (' + list.length + ')';
+window.DONE = true;
+</script>

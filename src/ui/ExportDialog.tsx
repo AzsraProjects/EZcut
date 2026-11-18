@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { projectDuration } from '../core/ops';
 import { ez } from '../desktop/api';
 import { exportProject, exportSize, type ExportResult } from '../export/exporter';
@@ -10,6 +10,12 @@ export function ExportDialog() {
   const project = useStore(s => s.project);
   const [height, setHeight] = useState(1080);
   const [fps, setFps] = useState(project.fps);
+  const [codec, setCodec] = useState<'h264' | 'hevc'>('h264');
+  const [software, setSoftware] = useState(false);
+  const [hw, setHw] = useState<{ h264: string | null; hevc: string | null }>({ h264: null, hevc: null });
+  useEffect(() => { void ez?.encoders().then(setHw).catch(() => {}); }, []);
+  const HW_NAMES: Record<string, string> = { nvenc: 'NVIDIA', qsv: 'Intel', amf: 'AMD' };
+  const gpu = hw[codec];
   const [progress, setProgress] = useState<[number, number] | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
   const cancel = useRef(false);
@@ -19,7 +25,7 @@ export function ExportDialog() {
 
   const start = async () => {
     cancel.current = false; setResult(null); setProgress([0, 1]);
-    const r = await exportProject(project, { height, fps }, (d, t) => setProgress([d, t]), () => cancel.current);
+    const r = await exportProject(project, { height, fps, codec, software }, (d, t) => setProgress([d, t]), () => cancel.current);
     if (r.cancelled) { setProgress(null); setResult(null); return; }
     setResult(r);
   };
@@ -31,7 +37,10 @@ export function ExportDialog() {
         {!ez && <p className="warn">L'export n'est disponible que dans l'application de bureau.</p>}
         {!duration && <p className="warn">La timeline est vide : ajoutez au moins un clip.</p>}
         {!running && !result?.ok && <>
-          <label className="row"><span>Format</span><span className="fixed">MP4 · H.264 · AAC</span></label>
+          <label className="row"><span>Format</span><select className="sel" value={codec} onChange={e => setCodec(e.target.value as 'h264' | 'hevc')}>
+            <option value="h264">MP4 · H.264 — compatible partout</option><option value="hevc">MP4 · H.265 — fichier plus léger</option></select></label>
+          <label className="row"><span>Encodage</span><select className="sel" value={software || !gpu ? 'cpu' : 'gpu'} onChange={e => setSoftware(e.target.value === 'cpu')}>
+            {gpu && <option value="gpu">Carte graphique {HW_NAMES[gpu] ?? gpu} — rapide</option>}<option value="cpu">Processeur — plus lent</option></select></label>
           <label className="row"><span>Résolution</span><select className="sel" value={height} onChange={e => setHeight(+e.target.value)}>
             {[720, 1080, 1440, 2160].map(h => { const s = exportSize(project, h); return <option key={h} value={h}>{h === 2160 ? '4K' : h + 'p'} — {s.width} × {s.height}</option>; })}</select></label>
           <label className="row"><span>Cadence</span><select className="sel" value={fps} onChange={e => setFps(+e.target.value)}>{[24, 25, 30, 50, 60].map(f => <option key={f} value={f}>{f} images/s</option>)}</select></label>

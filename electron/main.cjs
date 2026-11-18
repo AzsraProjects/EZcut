@@ -165,6 +165,29 @@ async function relink(win, paths) {
   return probeAll(trusted);
 }
 
+/* ---------- encodeurs ---------- */
+// Encodeurs matériels essayés dans cet ordre (NVIDIA, Intel, AMD). Un encodeur n'est retenu que s'il encode vraiment une image d'essai.
+const HW = ['nvenc', 'qsv', 'amf'];
+const hw = { h264: null, hevc: null };
+async function detectEncoders() {
+  if (!FFMPEG) return;
+  for (const codec of ['h264', 'hevc']) for (const kind of HW) {
+    const r = await run(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=640x360:r=30:d=0.2', '-c:v', `${codec}_${kind}`, '-f', 'null', '-'], 8000);
+    if (r.code === 0) { hw[codec] = kind; break; }
+  }
+}
+function videoArgs(codec, software) {
+  const kind = software ? null : hw[codec], tag = codec === 'hevc' ? ['-tag:v', 'hvc1'] : [];
+  if (kind === 'nvenc') return ['-c:v', codec + '_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', codec === 'hevc' ? '24' : '21', '-b:v', '0', ...tag];
+  if (kind === 'qsv') return ['-c:v', codec + '_qsv', '-global_quality', codec === 'hevc' ? '24' : '21', ...tag];
+  if (kind === 'amf') return ['-c:v', codec + '_amf', '-quality', 'quality', '-rc', 'cqp', '-qp_i', '20', '-qp_p', '22', ...tag];
+  return codec === 'hevc' ? ['-c:v', 'libx265', '-preset', 'fast', '-crf', '23', ...tag] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20'];
+}
+
+/* ---------- sauvegarde automatique ---------- */
+const autosaveFile = () => path.join(app.getPath('userData'), 'autosave.json');
+let dirty = false, closing = false;
+
 /* ---------- export ---------- */
 let job = null, starting = false, lastExport = null;
 
@@ -212,7 +235,7 @@ async function exportStart(win, req) {
     const args = ['-y', '-hide_banner', '-loglevel', 'error',
       '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(fps), '-i', 'pipe:0', ...inputs,
       '-filter_complex', ['[0:v]vflip,format=yuv420p[vout]', ...filters].join(';'), '-map', '[vout]', '-map', '[aout]',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', String(total), out];
+      ...videoArgs(req.codec === 'hevc' ? 'hevc' : 'h264', req.software === true), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', String(total), out];
     let child;
     try { child = spawn(FFMPEG, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { return { ok: false, error: 'FFmpeg n\'a pas pu démarrer : ' + e.message }; }
     const j = job = { child, out, err: '', failed: null, closed: null, size: width * height * 4 };
@@ -265,6 +288,14 @@ function createWindow() {
   // Aucune navigation ni fenêtre externe depuis l'interface.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
+  // Fermeture avec des modifications non enregistrées : l'utilisateur choisit.
+  win.on('close', e => {
+    if (!dirty || closing || AUTOTEST) return;
+    e.preventDefault();
+    const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Enregistrer', 'Ne pas enregistrer', 'Annuler'], defaultId: 0, cancelId: 2, title: 'EZcut', message: 'Enregistrer les modifications du projet ?', detail: 'Les modifications non enregistrées seront perdues.' });
+    if (r === 0) win.webContents.send('app:save-and-close');
+    else if (r === 1) { closing = true; try { fs.unlinkSync(autosaveFile()); } catch { /* rien à supprimer */ } win.close(); }
+  });
   win.loadURL(DEV_URL || APP_ORIGIN + '/index.html');
   return win;
 }
@@ -273,6 +304,7 @@ app.whenReady().then(() => {
   FFMPEG = resolveTool('ffmpeg', process.env.EZCUT_FFMPEG);
   FFPROBE = resolveTool('ffprobe', process.env.EZCUT_FFPROBE);
   loadKnown();
+  const encodersReady = detectEncoders();
   protocol.handle('app', serveApp);
   protocol.handle('ezmedia', serveMedia);
   // L'application n'a besoin d'aucune permission web (caméra, micro, position…).
@@ -317,7 +349,19 @@ app.whenReady().then(() => {
     projectPath = file; allowed.clear();
     return { path: file, json: fs.readFileSync(file, 'utf8') };
   });
-  handle('export:start', (e, req) => exportStart(winOf(e), req || {}));
+  handle('export:encoders', async () => { await encodersReady; return { h264: hw.h264, hevc: hw.hevc }; });
+  handle('project:dirty', (_e, v) => { dirty = v === true; });
+  handle('app:close', e => { closing = true; try { fs.unlinkSync(autosaveFile()); } catch { /* rien à supprimer */ } winOf(e)?.close(); });
+  handle('autosave:write', (_e, json) => {
+    if (typeof json !== 'string' || json.length > MAX_PROJECT_BYTES) return;
+    fs.writeFileSync(autosaveFile() + '.tmp', JSON.stringify({ savedAt: Date.now(), json }), 'utf8'); fs.renameSync(autosaveFile() + '.tmp', autosaveFile());
+  });
+  handle('autosave:read', () => {
+    if (AUTOTEST) return null;
+    try { const a = JSON.parse(fs.readFileSync(autosaveFile(), 'utf8')); return typeof a.json === 'string' ? { savedAt: Number(a.savedAt) || 0, json: a.json } : null; } catch { return null; }
+  });
+  handle('autosave:clear', () => { try { fs.unlinkSync(autosaveFile()); } catch { /* rien à supprimer */ } });
+  handle('export:start', async (e, req) => { await encodersReady; return exportStart(winOf(e), req || {}); });
   handle('export:frame', (_e, pixels) => exportFrame(pixels));
   handle('export:finish', () => exportFinish());
   handle('export:cancel', () => exportCancel());

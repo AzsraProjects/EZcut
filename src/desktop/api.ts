@@ -10,10 +10,13 @@ export interface ExportRequest {
   width: number; height: number; fps: number; frames: number; name: string;
   /** Une liste de segments par piste sonore : clips vidéo, musique, incrustations. Un segment sans chemin est un silence. */
   audio: AudioSegment[][];
+  codec?: 'h264' | 'hevc';
+  /** Forcer l'encodage logiciel, même si la carte graphique sait encoder. */
+  software?: boolean;
   /** Test automatique uniquement : chemin de sortie imposé, sans dialogue. */
   outPath?: string;
 }
-export interface AutoTest { media: string[]; out: string; }
+export interface AutoTest { media: string[]; out: string; height?: number; codec?: 'h264' | 'hevc'; }
 
 export interface EzApi {
   pickMedia(): Promise<ImportedFile[]>;
@@ -24,6 +27,14 @@ export interface EzApi {
   pathForFile(file: File): string;
   saveProject(json: string, saveAs: boolean): Promise<string | null>;
   openProject(): Promise<{ path: string; json: string } | null>;
+  /** Encodeur matériel disponible pour chaque codec (nvenc, qsv, amf), ou null. */
+  encoders(): Promise<{ h264: string | null; hevc: string | null }>;
+  setDirty(dirty: boolean): Promise<void>;
+  closeWindow(): Promise<void>;
+  onSaveAndClose(fn: () => void): void;
+  autosaveWrite(json: string): Promise<void>;
+  autosaveRead(): Promise<{ savedAt: number; json: string } | null>;
+  autosaveClear(): Promise<void>;
   exportStart(req: ExportRequest): Promise<{ ok: true; path: string } | { ok: false; error?: string }>;
   exportFrame(pixels: Uint8Array): Promise<void>;
   exportFinish(): Promise<{ ok: boolean; error?: string; path?: string }>;
