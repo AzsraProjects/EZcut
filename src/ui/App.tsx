@@ -60,12 +60,13 @@ export function App() {
     const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Alt') { player.alt = true; if (player.hover) e.preventDefault(); return; }
+      if (st().exportOpen) return; // pendant un export, le projet ne doit pas changer
       const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
       if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? st().redo() : st().undo(); return; }
       if (mod && k === 'y') { e.preventDefault(); st().redo(); return; }
       if (mod && k === 's') { e.preventDefault(); void saveProject(e.shiftKey); return; }
       if (mod && k === 'o') { e.preventDefault(); void openProject(); return; }
-      if (typing() || mod || st().exportOpen) return;
+      if (typing() || mod) return;
       if (e.code === 'Space') { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); player.toggle(); }
       else if (k === 's') splitAtPlayhead();
       else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection();

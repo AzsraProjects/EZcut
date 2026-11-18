@@ -32,11 +32,12 @@ export async function exportProject(p: Project, opts: ExportOptions, onProgress:
 
   const t0 = performance.now(), wasT = player.t;
   player.pause(); player.exporting = true;
+  player.resetExportState(width, height);
   const buf = new Uint8Array(width * height * 4);
   try {
     for (let f = 0; f < frames; f++) {
       if (cancelled()) { await ez.exportCancel(); return { ok: false, cancelled: true }; }
-      await player.renderExact(Math.min(f / opts.fps, duration - 1e-4), width, height, buf);
+      await player.renderExact(p, Math.min(f / opts.fps, duration - 1e-4), width, height, buf);
       await ez.exportFrame(buf);
       onProgress(f + 1, frames);
     }
@@ -46,6 +47,7 @@ export async function exportProject(p: Project, opts: ExportOptions, onProgress:
     await ez.exportCancel().catch(() => {});
     return { ok: false, error: String((e as Error).message ?? e) };
   } finally {
+    player.resetExportState(width, height);
     player.exporting = false; player.seek(wasT);
   }
 }

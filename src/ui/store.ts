@@ -35,6 +35,8 @@ interface State {
   /** Applique une opération. record=false pour les réglages en cours de glissement (précédés de checkpoint). */
   apply(fn: (p: Project) => Project, record?: boolean): void;
   checkpoint(): void;
+  /** Mise à jour technique (adresse de lecture, dimensions d'un média) : ni annulable, ni comptée comme une modification. */
+  applySilent(fn: (p: Project) => Project): void;
   undo(): void;
   redo(): void;
   select(sel: Selection): void;
@@ -61,9 +63,11 @@ export const useStore = create<State>((set, get) => ({
   apply(fn, record = true) {
     const { project, past } = get(), next = fn(project);
     if (next === project) return;
-    set(record ? { project: next, past: [...past, project].slice(-LIMIT), future: [], dirty: true } : { project: next, dirty: true });
+    set(record ? { project: next, past: [...past, project].slice(-LIMIT), future: [], dirty: true } : { project: next, future: [], dirty: true });
   },
-  checkpoint() { const { project, past } = get(); if (past[past.length - 1] !== project) set({ past: [...past, project].slice(-LIMIT), future: [] }); },
+  applySilent(fn) { const next = fn(get().project); if (next !== get().project) set({ project: next }); },
+  // « Rétablir » n'est effacé qu'au premier changement réel, pas au simple début d'un geste.
+  checkpoint() { const { project, past } = get(); if (past[past.length - 1] !== project) set({ past: [...past, project].slice(-LIMIT) }); },
   undo() {
     const { project, future } = get();
     // Un point d'annulation posé au début d'un geste resté sans effet est ignoré.

@@ -29,8 +29,9 @@ function ClipView({ clip, index, track, start, pps, project }: { clip: Clip; ind
   const onDrop = (e: React.DragEvent) => {
     const item = e.dataTransfer.getData('application/x-ezcut-item'), moved = e.dataTransfer.getData('application/x-ezcut-clip');
     if (item) { e.preventDefault(); e.stopPropagation(); const it = catalog.byId.get(item); if (it && track === 'video') applyItem(it, clip.id); }
-    else if (moved && moved !== clip.id) {
-      e.preventDefault(); e.stopPropagation();
+    else if (moved) {
+      e.preventDefault(); e.stopPropagation(); // y compris sur lui-même : sinon le dépôt remonte à la piste et l'envoie en fin
+      if (moved === clip.id) return;
       const r = e.currentTarget.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
       st().apply(p => (p[track].some(c => c.id === moved) ? moveClip(p, moved, index + (after ? 1 : 0)) : p));
     }

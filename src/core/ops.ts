@@ -67,6 +67,7 @@ export function splitAt(p: Project, track: TrackId, t: number): Project {
   c.dur = hit.local;
   c.transition = null; // la transition suit la partie droite, qui garde la coupe d'origine
   n[track].splice(hit.index + 1, 0, right);
+  clampTransitions(n[track]);
   return n;
 }
 
@@ -75,19 +76,19 @@ export function removeClip(p: Project, id: string): Project {
   if (!f) return p;
   const n = clone(p);
   n[f.track].splice(f.index, 1);
-  const last = n[f.track][n[f.track].length - 1];
-  if (last) last.transition = null;
-  if (f.index > 0 && f.index === n[f.track].length) n[f.track][f.index - 1].transition = null;
+  clampTransitions(n[f.track]);
   return n;
 }
 
 export function moveClip(p: Project, id: string, toIndex: number): Project {
   const f = findClip(p, id);
   if (!f) return p;
+  const to = Math.max(0, Math.min(p[f.track].length - 1, toIndex > f.index ? toIndex - 1 : toIndex));
+  if (to === f.index) return p;
   const n = clone(p), list = n[f.track];
   const [c] = list.splice(f.index, 1);
-  list.splice(Math.max(0, Math.min(list.length, toIndex > f.index ? toIndex - 1 : toIndex)), 0, c);
-  list.forEach((x, i) => { if (i === list.length - 1) x.transition = null; });
+  list.splice(to, 0, c);
+  clampTransitions(list);
   return n;
 }
 
@@ -113,7 +114,8 @@ function clampTransitions(list: Clip[]) {
     if (!c.transition) return;
     const next = list[i + 1];
     if (!next) { c.transition = null; return; }
-    c.transition.dur = Math.max(0.2, Math.min(c.transition.dur, c.dur, next.dur));
+    // Jamais plus longue que le plus court des deux clips qu'elle relie.
+    c.transition.dur = Math.min(c.dur, next.dur, Math.max(0.2, c.transition.dur));
   });
 }
 

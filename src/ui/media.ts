@@ -12,8 +12,8 @@ const waitEvent = (el: EventTarget, ok: string, ms = 8000) => new Promise<boolea
 
 /** Complète durée et dimensions à partir du fichier, puis fabrique la vignette et la bande d'images. */
 async function analyse(m: Media): Promise<void> {
-  const { setThumb, apply } = useStore.getState();
-  const patch = (fn: (x: Media) => void) => apply(p => { const n = structuredClone(p), x = n.media.find(y => y.id === m.id); if (x) fn(x); return n; }, false);
+  const { setThumb, applySilent } = useStore.getState();
+  const patch = (fn: (x: Media) => void) => applySilent(p => { const n = structuredClone(p), x = n.media.find(y => y.id === m.id); if (x) fn(x); return n; });
   if (m.kind === 'audio') {
     if (!m.duration) { const a = new Audio(m.url); if (await waitEvent(a, 'loadedmetadata')) patch(x => { x.duration = a.duration || 0; }); }
     return;
@@ -89,11 +89,11 @@ export async function relinkMedia(): Promise<number> {
   if (!ez || !list.length) return 0;
   const found = new Map((await ez.relinkMedia(list.map(m => m.path))).map(f => [f.path, f]));
   // Ce que dit le fichier lui-même remplace ce qu'affirmait le projet (type, présence de son, dimensions).
-  st.apply(p => {
+  st.applySilent(p => {
     const n = structuredClone(p);
     n.media.forEach(m => { const f = found.get(m.path); if (f) Object.assign(m, { url: f.url, kind: f.kind, hasAudio: f.hasAudio, duration: f.duration || m.duration, width: f.width || m.width, height: f.height || m.height }); });
     return n;
-  }, false);
+  });
   useStore.getState().project.media.forEach(m => { if (found.has(m.path)) void analyse(m); });
   return list.filter(m => !found.has(m.path)).length;
 }

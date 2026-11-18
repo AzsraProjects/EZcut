@@ -7,17 +7,18 @@ import { Engine, type EffectProgram, type Failed, type Target, type TransitionPr
 export const TW = 240, TH = 135;
 const PREVIEW_H = 540;
 
-interface Source { kind: 'video' | 'image'; el: HTMLVideoElement | HTMLImageElement; tex: WebGLTexture; w: number; h: number; loaded: boolean; }
+interface Source { url: string; kind: 'video' | 'image'; el: HTMLVideoElement | HTMLImageElement; tex: WebGLTexture; w: number; h: number; loaded: boolean; }
 interface Want { clip: Clip; index: number; start: number; time: number; live: boolean; }
 interface TargetSet { fit: Target; ping: [Target, Target]; ra: Target; rb: Target; out: Target; }
 interface ChainItem { p: EffectProgram; params: Record<string, unknown>; key: string; }
 interface Frame { a: Want; b?: Want; k?: number; }
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-const once = (el: EventTarget, ev: string, ms: number) => new Promise<void>(res => {
-  const done = () => { clearTimeout(t); el.removeEventListener(ev, done); res(); };
-  const t = setTimeout(done, ms);
-  el.addEventListener(ev, done);
+/** Attend un événement. Renvoie false si le délai est dépassé. */
+const once = (el: EventTarget, ev: string, ms: number) => new Promise<boolean>(res => {
+  const done = (ok: boolean) => { clearTimeout(t); el.removeEventListener(ev, yes); res(ok); };
+  const yes = () => done(true), t = setTimeout(() => done(false), ms);
+  el.addEventListener(ev, yes);
 });
 
 export class Player {
@@ -69,7 +70,7 @@ export class Player {
   play() {
     const total = projectDuration(this.getProject());
     if (!total || this.exporting) return;
-    if (this.t >= total - 0.02) this.t = 0;
+    if (this.t >= total - 0.02) { this.t = 0; this.jumped = true; }
     this.playing = true; this.onPlayState(true);
   }
   pause() {
@@ -108,20 +109,22 @@ export class Player {
   /* ---------- sources ---------- */
   private source(p: Project, clip: Clip): Source | null {
     let s = this.sources.get(clip.id);
-    if (s) return s;
     const media = p.media.find(m => m.id === clip.mediaId);
-    if (!media || media.kind === 'audio') return null;
+    // Le média vient d'être relié (ouverture d'un projet) ou a changé : la source est refaite.
+    if (s && media && s.url !== media.url) { this.dropSource(clip.id); s = undefined; }
+    if (s) return s;
+    if (!media || media.kind === 'audio' || !media.url) return null;
     const tex = this.engine.createTexture();
     if (media.kind === 'image') {
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      const src: Source = s = { kind: 'image', el: img, tex, w: media.width || 16, h: media.height || 9, loaded: false };
+      const src: Source = s = { url: media.url, kind: 'image', el: img, tex, w: media.width || 16, h: media.height || 9, loaded: false };
       img.onload = () => { src.w = img.naturalWidth; src.h = img.naturalHeight; this.engine.upload(tex, img); src.loaded = true; this.onSourceReady(); };
       img.src = media.url;
     } else {
       const v = document.createElement('video');
       v.crossOrigin = 'anonymous'; v.preload = 'auto'; v.playsInline = true; v.src = media.url;
-      s = { kind: 'video', el: v, tex, w: media.width || 16, h: media.height || 9, loaded: false };
+      s = { url: media.url, kind: 'video', el: v, tex, w: media.width || 16, h: media.height || 9, loaded: false };
     }
     this.sources.set(clip.id, s);
     return s;
@@ -169,7 +172,7 @@ export class Player {
       if (w.live && this.playing) {
         if (el.paused) { if (el.ended || Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time; el.play().catch(() => {}); }
         // En lecture, la vidéo est l'horloge : on ne la repositionne que sur un déplacement demandé par l'utilisateur.
-        else if (this.jumped && !el.seeking && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
+        else if (this.jumped && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
       } else {
         if (!el.paused) el.pause();
         if (!el.seeking && Math.abs(el.currentTime - w.time) > 0.02) el.currentTime = w.time;
@@ -284,8 +287,10 @@ export class Player {
   private tick = (now: number) => {
     requestAnimationFrame(this.tick);
     const dt = Math.min(0.1, (now - this.last) / 1000 || 0);
-    this.last = now; this.frameNo++;
+    this.last = now;
     if (this.exporting) return;
+    this.frameNo++;
+    if (this.frameNo % 600 === 0) this.collectEffectState();
     const p = this.getProject(), total = projectDuration(p);
     if (this.t > total) this.t = total;
 
@@ -298,9 +303,12 @@ export class Player {
     //    Elle est lue avant toute synchronisation, pour voir une fin de fichier avant de la traiter comme une pause.
     if (this.playing && !this.jumped) {
       const f0 = this.frameAt(p, this.t), live = f0 ? (f0.b?.live ? f0.b : f0.a) : null, s = live ? this.sources.get(live.clip.id) : null;
-      if (live && s?.kind === 'video') {
+      // La vidéo ne sert d'horloge que tant qu'on est avant la fin de son clip, et seulement si elle est lisible :
+      // au-delà (musique plus longue que l'image) ou sur un fichier illisible, l'horloge du système prend le relais.
+      if (live && s?.kind === 'video' && this.t < live.start + live.clip.dur - 1e-6) {
         const el = s.el as HTMLVideoElement, end = live.start + live.clip.dur;
-        if (el.ended) this.t = end;
+        if (el.error || el.networkState === el.NETWORK_NO_SOURCE) this.t += dt;
+        else if (el.ended) this.t = end;
         else if (!el.paused && !el.seeking && el.readyState >= 3) {
           const local = el.currentTime - live.clip.in;
           this.t = local >= live.clip.dur - 0.5 / p.fps ? end : live.start + clamp(local, 0, live.clip.dur);
@@ -333,22 +341,42 @@ export class Player {
   };
 
   /* ---------- export ---------- */
+  /** Avant et après un export : repart de tampons d'effets vierges et rend la mémoire des images pleine taille. */
+  resetExportState(w: number, h: number) {
+    for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect') this.engine.releaseState(pr, 'x');
+    const key = w + 'x' + h, s = this.sets.get(key);
+    if (s && !(w === this.vw && h === this.vh) && !(w === TW && h === TH)) { [s.fit, ...s.ping, s.ra, s.rb, s.out].forEach(t => this.engine.freeTarget(t)); this.sets.delete(key); }
+  }
+  /** Libère les tampons des effets retirés du projet. */
+  private collectEffectState() {
+    const p = this.getProject(), alive = new Set<string>();
+    for (const c of p.video) { alive.add('col' + c.id); for (const f of c.fx) alive.add(f.uid); }
+    for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect')
+      for (const k of Object.keys(pr.state)) if (k.startsWith('v') && !alive.has(k.slice(1, k.lastIndexOf(':')))) this.engine.releaseState(pr, k);
+  }
   /** Amène les sources exactement à l'instant t puis rend l'image w×h. Renvoie les pixels RGBA, lignes de bas en haut. */
-  async renderExact(t: number, w: number, h: number, into: Uint8Array): Promise<Uint8Array> {
-    const p = this.getProject(), f = this.frameAt(p, t);
-    for (const wnt of f ? (f.b ? [f.a, f.b] : [f.a]) : []) {
+  async renderExact(p: Project, t: number, w: number, h: number, into: Uint8Array): Promise<Uint8Array> {
+    const f = this.frameAt(p, t), wants = f ? (f.b ? [f.a, f.b] : [f.a]) : [];
+    // Seules les sources de l'image en cours restent ouvertes : un long projet n'accumule pas les décodeurs.
+    const keep = new Set(wants.map(x => x.clip.id));
+    for (const id of [...this.sources.keys()]) if (!keep.has(id)) this.dropSource(id);
+    for (const wnt of wants) {
       const s = this.source(p, wnt.clip);
-      if (!s) continue;
+      if (!s) continue; // média introuvable : image noire, comme dans l'aperçu
       if (s.kind === 'image') { if (!s.loaded) await once(s.el, 'load', 5000); continue; }
-      const el = s.el as HTMLVideoElement;
+      const el = s.el as HTMLVideoElement, name = p.media.find(m => m.id === wnt.clip.mediaId)?.name ?? 'média';
       el.pause(); el.muted = true;
-      if (el.readyState < 1) await once(el, 'loadedmetadata', 8000);
-      if (Math.abs(el.currentTime - wnt.time) > 0.0005 || el.readyState < 2) { el.currentTime = wnt.time; await once(el, 'seeked', 5000); }
-      if (el.readyState < 2) await once(el, 'loadeddata', 3000);
+      if (el.readyState < 1 && !el.error) await once(el, 'loadedmetadata', 8000);
+      if (el.error || el.readyState < 1) throw new Error(`« ${name} » ne peut pas être lu (format non pris en charge ou fichier illisible).`);
+      if (Math.abs(el.currentTime - wnt.time) > 0.0005 || el.readyState < 2) {
+        el.currentTime = wnt.time;
+        if (!await once(el, 'seeked', 10000)) throw new Error(`« ${name} » : la lecture n'a pas atteint l'instant demandé.`);
+      }
+      if (el.readyState < 2) await once(el, 'canplay', 3000);
       if (el.videoWidth) { this.engine.upload(s.tex, el); s.w = el.videoWidth; s.h = el.videoHeight; s.loaded = true; }
     }
     const set = this.set(w, h);
-    this.frameNo++;
+    this.frameNo = Math.round(t * p.fps); // numéro d'image stable, indépendant de la vitesse de rendu
     this.compose(p, f, w, h, set.out, 'x', t);
     return this.engine.readPixels(w, h, set.out, into);
   }
