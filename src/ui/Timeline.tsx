@@ -48,7 +48,7 @@ function ClipView({ clip, index, track, start, pps, project }: { clip: Clip; ind
   );
 }
 
-export function Timeline() {
+export function Timeline({ height }: { height: number }) {
   const project = useStore(s => s.project);
   const pps = useStore(s => s.pps);
   const sel = useStore(s => s.sel);
@@ -83,7 +83,7 @@ export function Timeline() {
   const vStarts = trackStarts(project.video), aStarts = trackStarts(project.audio);
 
   return (
-    <section className="tl">
+    <section className="tl" style={{ height, ['--lane-v' as string]: `${Math.max(44, height - 39 - 24 - 46 - 14)}px` }}>
       <div className="tools">
         <button className="ib" title="Scinder à la tête de lecture (S)" aria-label="Scinder" onClick={splitAtPlayhead}><Icon name="cut" /></button>
         <button className="ib" title="Supprimer la sélection (Suppr)" aria-label="Supprimer" disabled={!sel} onClick={deleteSelection}><Icon name="trash" /></button>

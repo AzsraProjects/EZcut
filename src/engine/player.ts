@@ -217,11 +217,11 @@ export class Player {
     for (const f of clip.fx) if (f.on) { const p = this.fxProg(f.effectId); if (p) ch.push({ p, params: f.params, key: key + f.uid }); }
     return ch;
   }
-  private runChain(src: WebGLTexture, ch: ChainItem[], w: number, h: number, out: Target | null, set: TargetSet, time: number) {
+  private runChain(src: WebGLTexture, ch: ChainItem[], w: number, h: number, out: Target | null, set: TargetSet, time: number, progress: number) {
     if (!ch.length) { this.engine.blit(src, w, h, out); return; }
     ch.forEach((c, i) => {
       const o = i === ch.length - 1 ? out : set.ping[i % 2];
-      this.engine.renderEffect(c.p, src, w, h, o, { time, frame: this.frameNo, key: c.key, params: c.params });
+      this.engine.renderEffect(c.p, src, w, h, o, { time, progress, frame: this.frameNo, key: c.key, params: c.params });
       if (o) src = o.tex;
     });
   }
@@ -231,17 +231,19 @@ export class Player {
     this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform);
     const ch = this.chainFor(clip, key);
     if (extra) ch.push(extra);
-    this.runChain(set.fit.tex, ch, w, h, out, set, time);
+    this.runChain(set.fit.tex, ch, w, h, out, set, time, clip.dur > 0 ? clamp(time / clip.dur, 0, 1) : 0);
   }
 
-  /** Compose l'instant t du projet vers out (ou le canvas). C'est le seul chemin de rendu : aperçu et export passent ici. */
-  compose(p: Project, f: Frame | null, w: number, h: number, out: Target | null, key: string, time: number, extra?: ChainItem) {
+  /** Compose l'instant t du projet vers out (ou le canvas). C'est le seul chemin de rendu : aperçu et export passent ici.
+   *  Chaque clip reçoit son temps local : un effet animé redémarre au début de chaque clip. */
+  compose(p: Project, f: Frame | null, w: number, h: number, out: Target | null, key: string, t: number, extra?: ChainItem) {
+    const local = (wn: Want) => clamp(t - wn.start, 0, wn.clip.dur);
     const set = this.set(w, h);
     if (!f) { this.engine.clear(w, h, out); return; }
-    if (!f.b) { this.clipFrame(p, f.a.clip, w, h, out, set, key, time, extra); return; }
+    if (!f.b) { this.clipFrame(p, f.a.clip, w, h, out, set, key, local(f.a), extra); return; }
     const tr = f.a.clip.transition ? this.trProg(f.a.clip.transition.effectId) : null;
-    this.clipFrame(p, f.a.clip, w, h, set.ra, set, key, time, f.a.live ? extra : undefined);
-    this.clipFrame(p, f.b.clip, w, h, set.rb, set, key, time, f.b.live ? extra : undefined);
+    this.clipFrame(p, f.a.clip, w, h, set.ra, set, key, local(f.a), f.a.live ? extra : undefined);
+    this.clipFrame(p, f.b.clip, w, h, set.rb, set, key, local(f.b), f.b.live ? extra : undefined);
     if (tr) this.engine.renderTransition(tr, set.ra.tex, set.rb.tex, clamp(f.k ?? 0, 0, 1), w, h, out, f.a.clip.transition!.params);
     else this.engine.blit((f.k ?? 0) < 0.5 ? set.ra.tex : set.rb.tex, w, h, out);
   }
@@ -273,7 +275,7 @@ export class Player {
     } else {
       const pr = this.fxProg(item.id); if (!pr) return;
       const n = live ? 1 : 4;
-      for (let k = 0; k < n; k++) this.engine.renderEffect(pr, a, TW, TH, null, { time: live ? now : 1 + k / 30, frame: this.frameNo + k, key: live ? 'hv' : 'th', params: this.previewParams(item) });
+      for (let k = 0; k < n; k++) this.engine.renderEffect(pr, a, TW, TH, null, { time: live ? now % 4 : 1 + k / 30, progress: live ? (now % 4) / 4 : 0.6, frame: this.frameNo + k, key: live ? 'hv' : 'th', params: this.previewParams(item) });
     }
     this.engine.present(ctx, TW, TH);
   }

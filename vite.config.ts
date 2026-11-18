@@ -15,7 +15,7 @@ function saveEndpoint(): Plugin {
         const chunks: Buffer[] = [];
         req.on('data', c => chunks.push(c));
         req.on('end', () => {
-          fs.writeFileSync(path.resolve(__dirname, 'tools/catalog/curation.json'), Buffer.concat(chunks));
+          fs.writeFileSync(path.resolve(import.meta.dirname, 'tools/catalog/curation.json'), Buffer.concat(chunks));
           res.end('ok');
         });
       });

@@ -1,5 +1,6 @@
 // Construit le catalogue d'effets à partir des dépôts amont, sans modifier les shaders.
 // usage: node tools/catalog/build.mjs <ISF-Files/ISF> <gl-transitions/transitions> [--all]
+// Les effets écrits pour EZcut (effects/ezcut, même format ISF) sont ajoutés en tête du catalogue.
 //   --all : ignore curation.json (première étape, avant de lancer harness.html)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,8 +19,14 @@ const skipped = {};
 const skip = (why, name) => { (skipped[why] ||= []).push(name); };
 
 const effects = [];
-for (const f of fs.readdirSync(isfDir).filter(f => f.endsWith('.fs')).sort()) {
-  const name = f.slice(0, -3), id = 'isf:' + name, tool = TOOLS.has(id);
+const ownDir = path.resolve(here, '../../effects/ezcut');
+const SOURCES = [
+  { dir: ownDir, prefix: 'ez:', license: 'GPL-3.0', source: 'EZcut' },
+  { dir: isfDir, prefix: 'isf:', license: 'MIT', source: 'Vidvox/ISF-Files' },
+];
+for (const SRC of SOURCES) for (const f of fs.readdirSync(SRC.dir).filter(f => f.endsWith('.fs')).sort()) {
+  const isfDir = SRC.dir;
+  const name = f.slice(0, -3), id = SRC.prefix + name, tool = TOOLS.has(id);
   if (excl.has(id) && !tool) { skip('excluded-by-test', name); continue; }
   const src = fs.readFileSync(path.join(isfDir, f), 'utf8');
   const m = src.match(/\/\*([\s\S]*?)\*\//);
@@ -43,7 +50,7 @@ for (const f of fs.readdirSync(isfDir).filter(f => f.endsWith('.fs')).sort()) {
     fs: src.slice(m.index + m[0].length),
     vs: fs.existsSync(vsPath) ? fs.readFileSync(vsPath, 'utf8') : null,
     preview: cur.preview[id] || null, temporal: cur.temporal.includes(id),
-    license: 'MIT', source: 'Vidvox/ISF-Files',
+    license: SRC.license, source: SRC.source,
   });
 }
 

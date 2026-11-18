@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { appendClip, setTransition, addFx } from '../core/ops';
 import { ez } from '../desktop/api';
 import { catalog, defaultsOf, loadCatalog, transitionDefaults } from '../effects/catalog';
@@ -10,7 +10,8 @@ import { Icon } from './Icon';
 import { Inspector } from './Inspector';
 import { Library } from './Library';
 import { importFiles, registerMedia } from './media';
-import { useStore } from './store';
+import { Splitter } from './Splitter';
+import { DEFAULT_LAYOUT, useStore } from './store';
 import { emitTime } from './time';
 import { Timeline } from './Timeline';
 import { Viewer } from './Viewer';
@@ -41,6 +42,8 @@ export function App() {
   const canUndo = useStore(s => s.past.length > 0);
   const canRedo = useStore(s => s.future.length > 0);
   const exportOpen = useStore(s => s.exportOpen);
+  const L = useStore(s => s.layout);
+  const drag = useRef(0);
 
   useEffect(() => {
     const st = useStore.getState;
@@ -79,9 +82,26 @@ export function App() {
   }, []);
 
   useEffect(() => { document.documentElement.classList.toggle('ez-light', light); }, [light]);
+  // Les bornes des panneaux dépendent de la taille de la fenêtre.
+  const [, redraw] = useState(0);
+  useEffect(() => { const f = () => redraw(n => n + 1); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
   useEffect(() => { document.title = `${dirty ? '• ' : ''}${name} — EZcut`; }, [name, dirty]);
 
   const st = useStore.getState;
+  const setL = st().setLayout;
+  const clampN = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+  // Bibliothèque et inspecteur : largeur réglable, masquables, interchangeables de côté.
+  const side = (slot: 'left' | 'right') => {
+    const left = slot === 'left', which = left !== L.swap ? 'lib' : 'insp';
+    const show = which === 'lib' ? L.showLib : L.showInsp, key = which === 'lib' ? 'libW' : 'inspW';
+    if (!show) return null;
+    const min = which === 'lib' ? 280 : 240, max = Math.max(min, Math.min(900, innerWidth - 700));
+    const panel = <div className="pane" style={{ width: Math.min(L[key], max) }}>{which === 'lib' ? <Library /> : <Inspector />}</div>;
+    const split = <Splitter dir="col" label={which === 'lib' ? 'Largeur de la bibliothèque' : 'Largeur de l’inspecteur'} onReset={() => setL({ [key]: DEFAULT_LAYOUT[key] })}
+      onDrag={(d, start) => { if (start) drag.current = Math.min(st().layout[key], max); setL({ [key]: clampN(drag.current + (left ? d : -d), min, max) }); }} />;
+    return left ? <>{panel}{split}</> : <>{split}{panel}</>;
+  };
+  const leftShown = L.swap ? L.showInsp : L.showLib, rightShown = L.swap ? L.showLib : L.showInsp;
   return (
     <div className="app">
       <header className="top">
@@ -98,15 +118,27 @@ export function App() {
           <span className={dirty ? 'saved no' : 'saved'} title={dirty ? 'Modifications non enregistrées' : 'Enregistré'} />
           <input className="pname" aria-label="Nom du projet" value={name} onChange={e => st().apply(p => ({ ...p, name: e.target.value }), false)} />
         </span>
+        <span className="tb">
+          <button className="ib" aria-pressed={leftShown} title="Afficher ou masquer le panneau de gauche" aria-label="Panneau de gauche" onClick={() => setL(L.swap ? { showInsp: !L.showInsp } : { showLib: !L.showLib })}><Icon name="pl" /></button>
+          <button className="ib" aria-pressed={L.showTl} title="Afficher ou masquer la timeline" aria-label="Timeline" onClick={() => setL({ showTl: !L.showTl })}><Icon name="pb" /></button>
+          <button className="ib" aria-pressed={rightShown} title="Afficher ou masquer le panneau de droite" aria-label="Panneau de droite" onClick={() => setL(L.swap ? { showLib: !L.showLib } : { showInsp: !L.showInsp })}><Icon name="pr" /></button>
+          <button className="ib" title="Échanger les panneaux gauche et droite" aria-label="Échanger les panneaux" onClick={() => setL({ swap: !L.swap })}><Icon name="swap" /></button>
+          <button className="ib" title="Rétablir la disposition par défaut" aria-label="Disposition par défaut" onClick={() => setL(DEFAULT_LAYOUT)}><Icon name="reset" /></button>
+          <span className="sep" />
+        </span>
         <button className="ib" title="Thème clair / sombre" aria-label="Thème clair ou sombre" onClick={() => st().set({ light: !st().light })}><Icon name="sun" /></button>
         <button className="btn primary" onClick={() => { player.pause(); st().set({ exportOpen: true }); }}><Icon name="export" />Exporter</button>
       </header>
       <div className="work">
-        <Library />
+        {side('left')}
         <Viewer />
-        <Inspector />
+        {side('right')}
       </div>
-      <Timeline />
+      {L.showTl && <>
+        <Splitter dir="row" label="Hauteur de la timeline" onReset={() => setL({ tlH: DEFAULT_LAYOUT.tlH })}
+          onDrag={(d, start) => { if (start) drag.current = st().layout.tlH; setL({ tlH: clampN(drag.current - d, 150, Math.max(150, innerHeight - 260)) }); }} />
+        <Timeline height={Math.min(L.tlH, Math.max(150, innerHeight - 260))} />
+      </>}
       {exportOpen && <ExportDialog />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

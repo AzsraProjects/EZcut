@@ -4,7 +4,16 @@ import { emptyProject, type Project } from '../core/types';
 export type Tab = 'media' | 'effects' | 'filters' | 'transitions';
 export type Selection = { kind: 'clip'; id: string } | { kind: 'transition'; id: string } | null;
 
+export interface Layout { libW: number; inspW: number; tlH: number; showLib: boolean; showInsp: boolean; showTl: boolean; swap: boolean; }
+export const DEFAULT_LAYOUT: Layout = { libW: 460, inspW: 310, tlH: 210, showLib: true, showInsp: true, showTl: true, swap: false };
+function loadLayout(): Layout {
+  try { return { ...DEFAULT_LAYOUT, ...JSON.parse(localStorage.getItem('ezcut.layout') ?? '{}') }; } catch { return DEFAULT_LAYOUT; }
+}
+
 interface State {
+  /** Disposition des panneaux, mémorisée d'une session à l'autre. */
+  layout: Layout;
+  setLayout(patch: Partial<Layout>): void;
   project: Project;
   past: Project[];
   future: Project[];
@@ -40,6 +49,12 @@ const LIMIT = 200;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useStore = create<State>((set, get) => ({
+  layout: loadLayout(),
+  setLayout(patch) {
+    const layout = { ...get().layout, ...patch };
+    set({ layout });
+    try { localStorage.setItem('ezcut.layout', JSON.stringify(layout)); } catch { /* stockage indisponible : la disposition vaut pour cette session */ }
+  },
   project: emptyProject(), past: [], future: [], sel: null, tab: 'media', filePath: null, dirty: false,
   catalogReady: false, pps: 60, toast: null, light: false, playing: false, exportOpen: false, thumbEpoch: 0, thumbs: {},
   setThumb(mediaId, t) { set(s => ({ thumbs: { ...s.thumbs, [mediaId]: { ...s.thumbs[mediaId], ...t } } })); },

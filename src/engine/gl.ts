@@ -12,7 +12,7 @@ interface Linked { prog: WebGLProgram; uni: Record<string, WebGLUniformLocation 
 export interface EffectProgram extends Linked { ok: true; kind: 'effect'; mode: string; def: EffectDef; targets: string[]; state: Record<string, Record<string, { front: Target; back: Target }>>; }
 export interface TransitionProgram extends Linked { ok: true; kind: 'transition'; mode: string; def: TransitionDef; }
 export interface Failed { ok: false; err: string; }
-export interface RenderOpts { time?: number; frame?: number; key?: string; params?: Record<string, unknown>; }
+export interface RenderOpts { time?: number; /** Avancement dans le clip, de 0 à 1 (uniforme EZ_PROGRESS, propre à EZcut). */ progress?: number; frame?: number; key?: string; params?: Record<string, unknown>; }
 
 function replaceMacro(src: string, name: string, fn: (args: string[]) => string): string {
   const re = new RegExp('\\b' + name + '\\s*\\(');
@@ -135,7 +135,7 @@ vec2 uv=p/box+.5;o=(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)?vec4(0.,0.,0.,1.):vec4(t
 
   compileEffect(def: EffectDef): EffectProgram | Failed {
     const targets = [...new Set((def.passes ?? []).map(p => p.TARGET).filter((t): t is string => !!t))];
-    let decl = 'uniform int PASSINDEX;uniform vec2 RENDERSIZE;uniform float TIME;uniform float TIMEDELTA;uniform int FRAMEINDEX;uniform vec4 DATE;\n';
+    let decl = 'uniform int PASSINDEX;uniform vec2 RENDERSIZE;uniform float TIME;uniform float TIMEDELTA;uniform int FRAMEINDEX;uniform vec4 DATE;uniform float EZ_PROGRESS;\n';
     for (const n of ['inputImage', ...targets]) decl += `uniform sampler2D ${n};uniform vec2 _${n}_size;\n`;
     for (const i of def.inputs) if (GLSL_TYPE[i.TYPE]) decl += `uniform ${GLSL_TYPE[i.TYPE]} ${i.NAME};\n`;
     const fsBody = expandISF(def.fs), vsBody = def.vs ? expandISF(def.vs) : 'void main(){isf_vertShaderInit();}';
@@ -239,6 +239,7 @@ vec2 uv=p/box+.5;o=(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)?vec4(0.,0.,0.,1.):vec4(t
     gl.uniform1f(this.u(p, 'TIMEDELTA'), 1 / 30);
     gl.uniform1i(this.u(p, 'FRAMEINDEX'), o.frame ?? 0);
     gl.uniform4f(this.u(p, 'DATE'), 2026, 1, 1, o.time ?? 0);
+    gl.uniform1f(this.u(p, 'EZ_PROGRESS'), o.progress ?? 0);
     for (const i of def.inputs) {
       const loc = this.u(p, i.NAME); if (!loc) continue;
       const v = vals[i.NAME] ?? i.DEFAULT;

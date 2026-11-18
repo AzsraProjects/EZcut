@@ -4,6 +4,8 @@
 
 `public/catalog/effets.json` contient des shaders du dépôt [Vidvox/ISF-Files](https://github.com/Vidvox/ISF-Files) (révision `395072d`), non modifiés, sous licence MIT — texte dans [licenses/ISF-Files.LICENSE.txt](licenses/ISF-Files.LICENSE.txt). L'auteur de chaque shader figure dans son champ `credit` et est affiché dans l'application.
 
+Les effets du dossier `effects/ezcut` sont écrits pour EZcut et suivent la licence du projet.
+
 ## Transitions
 
 Le même fichier contient des transitions du dépôt [gl-transitions](https://github.com/gl-transitions/gl-transitions) (révision `deeebde`), non modifiées. Chaque source porte son auteur et sa licence en en-tête : MIT pour 295 d'entre elles, BSD pour 2. Texte MIT dans [licenses/gl-transitions.LICENSE.txt](licenses/gl-transitions.LICENSE.txt).

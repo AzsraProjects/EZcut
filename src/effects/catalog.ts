@@ -20,7 +20,7 @@ export type CatItem = CatEffect | CatTransition;
 const FX_CATS: Record<string, string> = {
   'Stylize': 'Stylisation', 'Retro': 'Rétro', 'Glitch': 'Glitch', 'Blur': 'Flou', 'Distortion Effect': 'Distorsion', 'Distortion': 'Distorsion',
   'Halftone Effect': 'Trame', 'Feedback': 'Traînées', 'Kaleidoscope': 'Kaléidoscope', 'Tile Effect': 'Mosaïque', 'Noise': 'Bruit',
-  'Sharpen': 'Netteté', 'Geometry Adjustment': 'Mouvement et cadre', 'Color Effect': 'Couleur', 'Film': 'Film',
+  'Sharpen': 'Netteté', 'Geometry Adjustment': 'Mouvement et cadre', 'Mouvement': 'Mouvement et cadre', 'Color Effect': 'Couleur', 'Film': 'Film',
 };
 const FILTER_CATS: Record<string, string> = { 'Color Effect': 'Couleur', 'Color Adjustment': 'Réglages', 'Film': 'Film', 'v002': 'Film', 'Retro': 'Rétro', 'Stylize': 'Stylisé' };
 const TR_CATS: Record<string, string> = {

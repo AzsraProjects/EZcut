@@ -20,8 +20,9 @@ npm run dev      # lance avec rechargement à chaud pendant le développement
 
 - **Médias** : import par bouton ou glisser-déposer (vidéo, audio, image), vignettes.
 - **Timeline** : une piste vidéo et une piste audio, clips à la suite ; scinder, rogner les bords, réordonner par glisser-déposer, supprimer ; zoom ; annuler / rétablir.
-- **Banque** : 122 effets, 25 filtres et 297 transitions open source, avec aperçu au survol sur votre vidéo (`Alt` pour l'afficher en grand).
+- **Banque** : 130 effets (dont 8 effets de mouvement écrits pour EZcut), 25 filtres et 297 transitions, avec aperçu au survol sur votre vidéo (`Alt` pour l'afficher en grand).
 - **Inspecteur** : échelle, position, rotation, couleur, volume, et les réglages de chaque effet.
+- **Disposition** : panneaux redimensionnables, masquables et interchangeables (boutons en haut à droite), mémorisée entre les sessions.
 - **Formats de projet** : 16:9, 9:16, 1:1, 4:5.
 - **Projet** : enregistrer et ouvrir (`.ezcut`).
 - **Export** : MP4 H.264 / AAC, de 720p à 4K, 24 à 60 images par seconde. L'export passe par le même moteur que l'aperçu.
@@ -50,6 +51,7 @@ npm run test:export   # test d'intégration : import, montage, export, contrôle
 | `src/export` | Rendu image par image vers FFmpeg |
 | `src/ui` | Interface React |
 | `src/desktop`, `electron/` | Pont vers le système : fichiers, dialogues, FFmpeg |
+| `effects/ezcut` | Effets écrits pour EZcut, au format ISF |
 | `tools/catalog` | Construction et test du catalogue à partir des dépôts amont |
 | `docs/` | [Documentation](docs/README.md) : vision, architecture, feuille de route, méthode |
 
