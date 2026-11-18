@@ -172,14 +172,16 @@ function audioGraph(tracks, total) {
   // Chaque piste devient une suite de segments (son du fichier ou silence), puis les pistes sont mixées.
   const inputs = [], filters = [], mixed = [];
   let n = 1, count = 0; // l'entrée 0 est la vidéo brute
-  (Array.isArray(tracks) ? tracks.slice(0, 2) : []).forEach((segs, ti) => {
+  (Array.isArray(tracks) ? tracks.slice(0, 4) : []).forEach((segs, ti) => {
     const labels = [];
     (Array.isArray(segs) ? segs : []).forEach((s, si) => {
       if (++count > MAX_SEGMENTS || !s) return;
       const lab = `t${ti}s${si}`, dur = num(s.dur, 0.01, 86400, 0.01);
       if (typeof s.path === 'string' && allowed.has(s.path)) {
         inputs.push('-protocol_whitelist', 'file', '-ss', String(num(s.in, 0, 86400 * 4, 0)), '-t', String(dur), '-i', s.path);
-        filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${num(s.volume, 0, 4, 1)}[${lab}]`);
+        const fi = num(s.fadeIn, 0, dur, 0), fo = num(s.fadeOut, 0, dur, 0);
+        const fades = (fi > 0 ? `,afade=t=in:st=0:d=${fi}` : '') + (fo > 0 ? `,afade=t=out:st=${Math.max(0, dur - fo)}:d=${fo}` : '');
+        filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${num(s.volume, 0, 4, 1)}${fades}[${lab}]`);
         n++;
       } else filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${dur}[${lab}]`);
       labels.push(`[${lab}]`);

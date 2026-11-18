@@ -1,19 +1,26 @@
 /** Export : rend chaque image avec le même compositeur que l'aperçu et l'envoie à FFmpeg (processus principal). */
 import { projectDuration } from '../core/ops';
-import type { Project } from '../core/types';
+import type { Clip, Project } from '../core/types';
 import { ez, type AudioSegment } from '../desktop/api';
 import { player } from '../engine/player';
 
 export interface ExportOptions { height: number; fps: number; }
 export interface ExportResult { ok: boolean; path?: string; error?: string; cancelled?: boolean; frames?: number; seconds?: number; }
 
-/** Plan audio : la piste des clips vidéo (silence pour les images et les vidéos muettes) et la piste musique. */
+/** Plan audio : une suite de segments par piste (clips vidéo, musique, incrustations). Images, vidéos muettes et trous deviennent des silences. */
 export function audioPlan(p: Project): AudioSegment[][] {
-  const seg = (track: Project['video']) => track.map(c => {
+  const seg = (c: Clip): AudioSegment => {
     const m = p.media.find(x => x.id === c.mediaId);
-    return { path: m && m.hasAudio && m.kind !== 'image' ? m.path : null, in: c.in, dur: c.dur, volume: c.volume };
-  });
-  return [seg(p.video), seg(p.audio)];
+    return { path: m && m.hasAudio && m.kind !== 'image' ? m.path : null, in: c.in, dur: c.dur, volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut };
+  };
+  // Piste libre : les trous entre les clips sont comblés par du silence.
+  const free: AudioSegment[] = [];
+  let at = 0;
+  for (const c of [...p.overlay].sort((a, b) => a.start - b.start)) {
+    if (c.start > at + 1e-6) free.push({ path: null, in: 0, dur: c.start - at, volume: 0 });
+    free.push(seg(c)); at = c.start + c.dur;
+  }
+  return [p.video.map(seg), p.audio.map(seg), free.some(s => s.path) ? free : []];
 }
 
 export function exportSize(p: Project, height: number): { width: number; height: number } {

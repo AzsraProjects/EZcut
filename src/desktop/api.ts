@@ -5,10 +5,10 @@ export interface ImportedFile {
   kind: 'video' | 'audio' | 'image';
   duration: number; width: number; height: number; hasAudio: boolean;
 }
-export interface AudioSegment { path: string | null; in: number; dur: number; volume: number; }
+export interface AudioSegment { path: string | null; in: number; dur: number; volume: number; fadeIn?: number; fadeOut?: number; }
 export interface ExportRequest {
   width: number; height: number; fps: number; frames: number; name: string;
-  /** Deux pistes audio : celle des clips vidéo et celle de la musique. */
+  /** Une liste de segments par piste sonore : clips vidéo, musique, incrustations. Un segment sans chemin est un silence. */
   audio: AudioSegment[][];
   /** Test automatique uniquement : chemin de sortie imposé, sans dialogue. */
   outPath?: string;

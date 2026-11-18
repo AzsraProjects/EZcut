@@ -32,7 +32,7 @@ describe('lecture d\'un projet', () => {
   });
   it('refuse ce qui n\'est pas un projet', () => {
     expect(parseProject('pas du json')).toBeNull();
-    expect(parse({ version: 2, media: [], video: [], audio: [] })).toBeNull();
+    expect(parse({ version: 3, media: [], video: [], audio: [] })).toBeNull();
     expect(parse({ version: 1, media: {}, video: [], audio: [] })).toBeNull();
     expect(parse(null)).toBeNull();
   });
@@ -49,6 +49,23 @@ describe('lecture d\'un projet', () => {
     const o = base();
     o.video.push({ ...o.video[0], id: 'c9', mediaId: 'inconnu' }, { ...o.video[0] }, { ...o.audio[0], id: 'c8' } as never);
     expect(parse(o)!.video.map(c => c.id)).toEqual(['c1', 'c2']);
+  });
+  it('reprend un projet de version 1 et lui ajoute les pistes libres vides', () => {
+    const p = parse(base())!;
+    expect(p.version).toBe(2);
+    expect(p.overlay).toEqual([]); expect(p.text).toEqual([]);
+    expect(p.video[0].opacity).toBe(1); expect(p.video[0].blend).toBe('normal'); expect(p.video[0].fadeIn).toBe(0);
+  });
+  it('nettoie les titres et sépare les clips qui se chevauchent sur une piste libre', () => {
+    const o = { ...base(), version: 2, text: [
+      { id: 't1', start: 1, dur: 3, text: { content: 'Bonjour', font: 'Arial"; x', size: 9, color: 'rouge', align: 'milieu', animIn: 'explosion' } },
+      { id: 't2', start: 2, dur: 2, text: { content: 'Deux' } },
+      { id: 't3', start: 0, dur: 1 },
+    ] };
+    const p = parse(o)!;
+    expect(p.text.map(c => c.id)).toEqual(['t1', 't2']);
+    expect(p.text[0].text).toMatchObject({ content: 'Bonjour', font: 'Arial x', size: 1, color: '#ffffff', align: 'center', animIn: 'none' });
+    expect(p.text[1].start).toBe(4);
   });
   it('ne garde que des paramètres numériques, booléens ou vecteurs courts', () => {
     const o = base();

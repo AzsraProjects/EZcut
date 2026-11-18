@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { appendClip, setTransition, addFx } from '../core/ops';
+import { addFx, addOverlay, addText, appendClip, patchClip, setTransition } from '../core/ops';
+import { defaultText } from '../core/types';
 import { ez } from '../desktop/api';
 import { catalog, defaultsOf, loadCatalog, transitionDefaults } from '../effects/catalog';
 import { player } from '../engine/player';
@@ -29,6 +30,10 @@ async function runAutoTest() {
     const v = st().project.video, fx = catalog.effects.find(e => e.id === 'isf:VHS Glitch') ?? catalog.effects[0], tr = catalog.transitions.find(t => t.id === 'glt:CrossZoom') ?? catalog.transitions[0];
     if (v[0] && fx) st().apply(p => addFx(p, v[0].id, fx.id, defaultsOf(fx)));
     if (v.length > 1 && tr) st().apply(p => setTransition(p, v[0].id, { effectId: tr.id, params: transitionDefaults(tr), dur: 1 }));
+    // Un titre animé et une incrustation avec fondu sonore : toutes les pistes passent par l'export.
+    st().apply(p => addText(p, { ...defaultText(), content: 'EZcut', animIn: 'pop' }, 0.5).project);
+    const ov = addOverlay(st().project, media[media.length - 1].id, 1);
+    if (ov) st().apply(() => patchClip(ov.project, ov.clipId, c => { c.dur = Math.min(c.dur, 2); c.fadeIn = 0.5; c.opacity = 0.8; }));
     const r = await exportProject(st().project, { height: 720, fps: 30 }, () => {}, () => false, cfg.out);
     done({ ...r, clips: st().project.video.length, fx: fx?.id, transition: tr?.id, effects: catalog.effects.length, filters: catalog.filters.length, transitions: catalog.transitions.length });
   } catch (e) { done({ ok: false, error: String((e as Error).stack ?? e) }); }

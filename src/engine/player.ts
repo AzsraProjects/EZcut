@@ -1,17 +1,22 @@
 /** Lecture et composition : calcule l'image du projet à un instant donné, pour l'aperçu, les vignettes et l'export. */
-import { clipAt, projectDuration } from '../core/ops';
-import { emptyProject, type Clip, type Project } from '../core/types';
-import { catalog, type CatEffect, type CatItem, type CatTransition } from '../effects/catalog';
+import { activeAt, clipAt, fadeGain, projectDuration } from '../core/ops';
+import { BLEND_MODES, emptyProject, type Clip, type Project } from '../core/types';
+import { catalog, type CatEffect, type CatItem } from '../effects/catalog';
 import { Engine, type EffectProgram, type Failed, type Target, type TransitionProgram } from './gl';
+import { animState, drawText } from './text';
 
 export const TW = 240, TH = 135;
 const PREVIEW_H = 540;
 
 interface Source { url: string; kind: 'video' | 'image'; el: HTMLVideoElement | HTMLImageElement; tex: WebGLTexture; w: number; h: number; loaded: boolean; }
 interface Want { clip: Clip; index: number; start: number; time: number; live: boolean; }
-interface TargetSet { fit: Target; ping: [Target, Target]; ra: Target; rb: Target; out: Target; }
+interface TargetSet { fit: Target; ping: [Target, Target]; ra: Target; rb: Target; out: Target; acc: [Target, Target]; }
 interface ChainItem { p: EffectProgram; params: Record<string, unknown>; key: string; }
+/** Image de la piste principale : un clip, ou deux pendant une transition (k = avancement). */
 interface Frame { a: Want; b?: Want; k?: number; }
+/** Couche au-dessus de la piste principale : incrustation ou titre. */
+interface Layer { clip: Clip; local: number; }
+interface TextCache { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; tex: WebGLTexture; key: string; }
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** Attend un événement. Renvoie false si le délai est dépassé. */
@@ -42,6 +47,7 @@ export class Player {
   private view: CanvasRenderingContext2D | null = null;
   private sources = new Map<string, Source>();
   private audios = new Map<string, HTMLAudioElement>();
+  private texts = new Map<string, TextCache>();
   private progs = new Map<string, EffectProgram | TransitionProgram | Failed>();
   private sets = new Map<string, TargetSet>();
   private sample: { a: WebGLTexture; b: WebGLTexture; w: number; h: number } | null = null;
@@ -100,7 +106,7 @@ export class Player {
     let s = this.sets.get(key);
     if (!s) {
       const mk = () => this.engine.createTarget(w, h);
-      s = { fit: mk(), ping: [mk(), mk()], ra: mk(), rb: mk(), out: mk() };
+      s = { fit: mk(), ping: [mk(), mk()], ra: mk(), rb: mk(), out: mk(), acc: [mk(), mk()] };
       this.sets.set(key, s);
     }
     return s;
@@ -136,8 +142,12 @@ export class Player {
     this.engine.deleteTexture(s.tex);
     this.sources.delete(id);
   }
+  private grab(s: Source) {
+    const el = s.el as HTMLVideoElement;
+    if (el.readyState >= 2 && el.videoWidth) { this.engine.upload(s.tex, el); s.w = el.videoWidth; s.h = el.videoHeight; if (!s.loaded) { s.loaded = true; this.onSourceReady(); } }
+  }
 
-  /** Quels clips faut-il, et à quel instant de leur source, pour composer l'instant t. */
+  /** Quels clips de la piste principale faut-il, et à quel instant de leur source, pour composer l'instant t. */
   private frameAt(p: Project, t: number): Frame | null {
     const hit = clipAt(p.video, t);
     if (!hit) return null;
@@ -159,35 +169,65 @@ export class Player {
     }
     return { a: { clip: c, index: i, start: hit.start, time: c.in + Math.min(hit.local, c.dur), live: true } };
   }
+  /** Incrustations puis titres présents à l'instant t, du dessous vers le dessus. */
+  private layersAt(p: Project, t: number): Layer[] {
+    return [...activeAt(p.overlay, t), ...activeAt(p.text, t)].map(clip => ({ clip, local: t - clip.start }));
+  }
 
-  private syncVideo(p: Project, f: Frame | null) {
+  private syncVideo(p: Project, f: Frame | null, layers: Layer[], t: number) {
     const wants = f ? (f.b ? [f.a, f.b] : [f.a]) : [];
-    const keep = new Set(wants.map(w => w.clip.id));
+    const active = new Set<string>();
+    // Piste principale : le clip en cours donne l'heure, on ne le repositionne que sur demande.
     for (const w of wants) {
       const s = this.source(p, w.clip);
+      active.add(w.clip.id);
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement;
-      el.volume = clamp(w.clip.volume, 0, 1);
+      el.volume = clamp(w.clip.volume * fadeGain(w.clip, w.time - w.clip.in), 0, 1);
       el.muted = this.muted || !w.live;
       if (w.live && this.playing) {
         if (el.paused) { if (el.ended || Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time; el.play().catch(() => {}); }
-        // En lecture, la vidéo est l'horloge : on ne la repositionne que sur un déplacement demandé par l'utilisateur.
         else if (this.jumped && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
       } else {
         if (!el.paused) el.pause();
         if (!el.seeking && Math.abs(el.currentTime - w.time) > 0.02) el.currentTime = w.time;
       }
-      if (el.readyState >= 2 && el.videoWidth) { this.engine.upload(s.tex, el); s.w = el.videoWidth; s.h = el.videoHeight; if (!s.loaded) { s.loaded = true; this.onSourceReady(); } }
+      this.grab(s);
     }
-    // Clip suivant préchargé ; les autres sont mis en pause, les plus lointains libérés.
+    // Incrustations : elles suivent l'horloge du projet.
+    for (const l of layers) {
+      if (l.clip.text) continue;
+      const s = this.source(p, l.clip);
+      active.add(l.clip.id);
+      if (!s || s.kind !== 'video') continue;
+      const el = s.el as HTMLVideoElement, time = l.clip.in + l.local, off = Math.abs(el.currentTime - time);
+      el.volume = clamp(l.clip.volume * fadeGain(l.clip, l.local), 0, 1);
+      el.muted = this.muted;
+      if (this.playing) {
+        if (el.paused) { if (el.ended || off > 0.05) el.currentTime = time; el.play().catch(() => {}); }
+        else if (off > (this.jumped ? 0.05 : 0.3)) el.currentTime = time;
+      } else {
+        if (!el.paused) el.pause();
+        if (!el.seeking && off > 0.02) el.currentTime = time;
+      }
+      this.grab(s);
+    }
+    // Préchargement : clip principal suivant, incrustations qui arrivent dans les deux secondes.
+    const near = new Set(active);
     const cur = wants.length ? wants[wants.length - 1].index : -1;
-    const ahead = p.video[cur + 1];
-    if (ahead && !keep.has(ahead.id)) { const s = this.source(p, ahead); if (s?.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); if (!el.seeking && Math.abs(el.currentTime - ahead.in) > 0.02) el.currentTime = ahead.in; } }
-    const index = new Map(p.video.map((c, i) => [c.id, i]));
+    const prime = (clip: Clip) => {
+      near.add(clip.id);
+      if (active.has(clip.id)) return;
+      const s = this.source(p, clip);
+      if (s?.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); if (!el.seeking && Math.abs(el.currentTime - clip.in) > 0.02) el.currentTime = clip.in; }
+    };
+    if (cur >= 0 && p.video[cur + 1]) prime(p.video[cur + 1]);
+    for (const c of p.overlay) if (c.start > t && c.start - t < 2) prime(c);
+    if (cur >= 0) for (const i of [cur - 1, cur - 2, cur + 2]) if (p.video[i]) near.add(p.video[i].id);
+    if (this.targetClipId) near.add(this.targetClipId);
     for (const [id, s] of this.sources) {
-      const i = index.get(id);
-      if (i === undefined || (cur >= 0 && Math.abs(i - cur) > 2 && id !== this.targetClipId)) { this.dropSource(id); continue; }
-      if (!keep.has(id) && s.kind === 'video' && id !== ahead?.id) { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); }
+      if (!near.has(id)) { this.dropSource(id); continue; }
+      if (!active.has(id) && s.kind === 'video') { const el = s.el as HTMLVideoElement; if (!el.paused) el.pause(); }
     }
   }
 
@@ -195,12 +235,14 @@ export class Player {
     const hit = clipAt(p.audio, t), activeId = hit && t < hit.start + hit.clip.dur ? hit.clip.id : null;
     if (hit && activeId) {
       let a = this.audios.get(activeId);
-      if (!a) { const media = p.media.find(m => m.id === hit.clip.mediaId); if (media) { a = new Audio(media.url); a.preload = 'auto'; this.audios.set(activeId, a); } }
+      const media = p.media.find(m => m.id === hit.clip.mediaId);
+      if (a && media && a.dataset.url !== media.url) { a.pause(); this.audios.delete(activeId); a = undefined; }
+      if (!a && media?.url) { a = new Audio(media.url); a.preload = 'auto'; a.dataset.url = media.url; this.audios.set(activeId, a); }
       if (a) {
         const time = hit.clip.in + hit.local;
-        a.volume = clamp(hit.clip.volume, 0, 1); a.muted = this.muted;
+        a.volume = clamp(hit.clip.volume * fadeGain(hit.clip, hit.local), 0, 1); a.muted = this.muted;
         if (this.playing) { if (a.paused) { if (Math.abs(a.currentTime - time) > 0.05) a.currentTime = time; a.play().catch(() => {}); } else if (this.jumped || Math.abs(a.currentTime - time) > 1) a.currentTime = time; }
-        else { if (!a.paused) a.pause(); }
+        else if (!a.paused) a.pause();
       }
     }
     const ids = new Set(p.audio.map(c => c.id));
@@ -228,7 +270,7 @@ export class Player {
       if (o) src = o.tex;
     });
   }
-  private clipFrame(p: Project, clip: Clip, w: number, h: number, out: Target | null, set: TargetSet, key: string, time: number, extra?: ChainItem) {
+  private clipFrame(clip: Clip, w: number, h: number, out: Target | null, set: TargetSet, key: string, time: number, extra?: ChainItem) {
     const s = this.sources.get(clip.id);
     if (!s || !s.loaded) { this.engine.clear(w, h, out); return; }
     this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform);
@@ -236,19 +278,56 @@ export class Player {
     if (extra) ch.push(extra);
     this.runChain(set.fit.tex, ch, w, h, out, set, time, clip.dur > 0 ? clamp(time / clip.dur, 0, 1) : 0);
   }
-
-  /** Compose l'instant t du projet vers out (ou le canvas). C'est le seul chemin de rendu : aperçu et export passent ici.
-   *  Chaque clip reçoit son temps local : un effet animé redémarre au début de chaque clip. */
-  compose(p: Project, f: Frame | null, w: number, h: number, out: Target | null, key: string, t: number, extra?: ChainItem) {
-    const local = (wn: Want) => clamp(t - wn.start, 0, wn.clip.dur);
-    const set = this.set(w, h);
+  /** Piste principale. Chaque clip reçoit son temps local : un effet animé redémarre au début de chaque clip. */
+  private composeMain(f: Frame | null, w: number, h: number, out: Target | null, set: TargetSet, key: string, t: number, extra?: ChainItem) {
     if (!f) { this.engine.clear(w, h, out); return; }
-    if (!f.b) { this.clipFrame(p, f.a.clip, w, h, out, set, key, local(f.a), extra); return; }
+    const local = (wn: Want) => clamp(t - wn.start, 0, wn.clip.dur);
+    if (!f.b) { this.clipFrame(f.a.clip, w, h, out, set, key, local(f.a), extra); return; }
     const tr = f.a.clip.transition ? this.trProg(f.a.clip.transition.effectId) : null;
-    this.clipFrame(p, f.a.clip, w, h, set.ra, set, key, local(f.a), f.a.live ? extra : undefined);
-    this.clipFrame(p, f.b.clip, w, h, set.rb, set, key, local(f.b), f.b.live ? extra : undefined);
+    this.clipFrame(f.a.clip, w, h, set.ra, set, key, local(f.a), f.a.live ? extra : undefined);
+    this.clipFrame(f.b.clip, w, h, set.rb, set, key, local(f.b), f.b.live ? extra : undefined);
     if (tr) this.engine.renderTransition(tr, set.ra.tex, set.rb.tex, clamp(f.k ?? 0, 0, 1), w, h, out, f.a.clip.transition!.params);
     else this.engine.blit((f.k ?? 0) < 0.5 ? set.ra.tex : set.rb.tex, w, h, out);
+  }
+
+  private textTexture(clip: Clip, w: number, h: number, chars: number): WebGLTexture {
+    let c = this.texts.get(clip.id);
+    if (!c) { const canvas = document.createElement('canvas'); c = { canvas, ctx: canvas.getContext('2d')!, tex: this.engine.createTexture(), key: '' }; this.texts.set(clip.id, c); }
+    const key = `${w}x${h}|${chars}|${JSON.stringify(clip.text)}`;
+    if (c.key !== key) {
+      if (c.canvas.width !== w || c.canvas.height !== h) { c.canvas.width = w; c.canvas.height = h; }
+      drawText(c.ctx, w, h, clip.text!, chars);
+      this.engine.upload(c.tex, c.canvas);
+      c.key = key;
+    }
+    return c.tex;
+  }
+
+  /** Compose l'instant t du projet vers out (ou le canvas). C'est le seul chemin de rendu : aperçu et export passent ici. */
+  compose(f: Frame | null, layers: Layer[], w: number, h: number, out: Target | null, key: string, t: number, extra?: ChainItem) {
+    const set = this.set(w, h);
+    const visible = layers.filter(l => l.clip.text || this.sources.get(l.clip.id)?.loaded);
+    if (!visible.length) { this.composeMain(f, w, h, out, set, key, t, extra); return; }
+    this.composeMain(f, w, h, set.acc[0], set, key, t, extra);
+    let base = set.acc[0];
+    visible.forEach((l, i) => {
+      const dst = i === visible.length - 1 ? out : base === set.acc[0] ? set.acc[1] : set.acc[0];
+      const clip = l.clip;
+      let top = set.fit.tex, opacity = clip.opacity;
+      if (clip.text) {
+        const a = animState(clip.text, l.local, clip.dur);
+        opacity *= a.alpha;
+        this.engine.drawFit(this.textTexture(clip, w, h, a.chars), w, h, w, h, set.fit, { ...clip.transform, scale: clip.transform.scale * a.scale, y: clip.transform.y + a.dy }, true);
+      } else {
+        const s = this.sources.get(clip.id)!;
+        this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform, true);
+        const ch = this.chainFor(clip, key);
+        if (ch.length) { this.runChain(set.fit.tex, ch, w, h, set.ra, set, l.local, clamp(l.local / clip.dur, 0, 1)); top = set.ra.tex; }
+      }
+      // La couverture vient toujours de l'image d'origine : un effet change les couleurs de la couche, pas sa forme.
+      this.engine.layer(base.tex, top, set.fit.tex, clamp(opacity, 0, 1), Math.max(0, BLEND_MODES.indexOf(clip.blend)), w, h, dst);
+      if (dst) base = dst;
+    });
   }
 
   /* ---------- vignettes et aperçu au survol ---------- */
@@ -265,7 +344,9 @@ export class Player {
       else this.engine.drawFit(fallback, this.sample!.w, this.sample!.h, w, h, into);
       return into.tex;
     };
-    return [fit(p.video[i], this.sample!.a, set.ra), fit(i >= 0 ? p.video[i + 1] : undefined, this.sample!.b, set.rb)];
+    // Une incrustation sélectionnée sert de modèle pour les aperçus d'effets.
+    const over = p.overlay.find(c => c.id === this.targetClipId);
+    return [fit(over ?? p.video[i], this.sample!.a, set.ra), fit(i >= 0 ? p.video[i + 1] : undefined, this.sample!.b, set.rb)];
   }
   private previewParams(e: CatEffect) { return e.preview ?? {}; }
 
@@ -290,7 +371,7 @@ export class Player {
     this.last = now;
     if (this.exporting) return;
     this.frameNo++;
-    if (this.frameNo % 600 === 0) this.collectEffectState();
+    if (this.frameNo % 600 === 0) this.collect();
     const p = this.getProject(), total = projectDuration(p);
     if (this.t > total) this.t = total;
 
@@ -299,12 +380,12 @@ export class Player {
     if (vw !== this.vw) { this.vw = vw; this.glc.width = vw; }
     if (this.view && (this.view.canvas.width !== vw || this.view.canvas.height !== this.vh)) { this.view.canvas.width = vw; this.view.canvas.height = this.vh; }
 
-    // 1. Horloge : en lecture, la vidéo en cours donne l'heure (image et son restent synchrones). Sans vidéo, l'horloge du système.
+    // 1. Horloge : en lecture, la vidéo de la piste principale donne l'heure (image et son restent synchrones).
     //    Elle est lue avant toute synchronisation, pour voir une fin de fichier avant de la traiter comme une pause.
     if (this.playing && !this.jumped) {
       const f0 = this.frameAt(p, this.t), live = f0 ? (f0.b?.live ? f0.b : f0.a) : null, s = live ? this.sources.get(live.clip.id) : null;
       // La vidéo ne sert d'horloge que tant qu'on est avant la fin de son clip, et seulement si elle est lisible :
-      // au-delà (musique plus longue que l'image) ou sur un fichier illisible, l'horloge du système prend le relais.
+      // au-delà (musique ou titre plus long que l'image) ou sur un fichier illisible, l'horloge du système prend le relais.
       if (live && s?.kind === 'video' && this.t < live.start + live.clip.dur - 1e-6) {
         const el = s.el as HTMLVideoElement, end = live.start + live.clip.dur;
         if (el.error || el.networkState === el.NETWORK_NO_SOURCE) this.t += dt;
@@ -317,8 +398,8 @@ export class Player {
       if (this.t >= total - 1e-4) { this.t = total; this.pause(); }
     }
     // 2. Sources amenées à l'instant voulu.
-    const f = this.frameAt(p, this.t);
-    this.syncVideo(p, f);
+    const f = this.frameAt(p, this.t), layers = this.layersAt(p, this.t);
+    this.syncVideo(p, f, layers, this.t);
     this.syncAudio(p, this.t);
     this.jumped = false;
 
@@ -330,7 +411,7 @@ export class Player {
     } else {
       let extra: ChainItem | undefined;
       if (hv && this.alt && hv.item.kind !== 'transition') { const pr = this.fxProg(hv.item.id); if (pr) extra = { p: pr, params: this.previewParams(hv.item), key: 'alt' }; }
-      this.compose(p, f, this.vw, this.vh, null, 'v', this.t, extra);
+      this.compose(f, layers, this.vw, this.vh, null, 'v', this.t, extra);
     }
     if (this.view) this.engine.present(this.view, this.vw, this.vh);
 
@@ -340,23 +421,28 @@ export class Player {
     this.onTime(this.t);
   };
 
+  /** Libère les tampons des effets et les textures des titres retirés du projet. */
+  private collect() {
+    const p = this.getProject(), alive = new Set<string>(), texts = new Set(p.text.map(c => c.id));
+    for (const c of [...p.video, ...p.overlay]) { alive.add('col' + c.id); for (const f of c.fx) alive.add(f.uid); }
+    for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect')
+      for (const k of Object.keys(pr.state)) if (k.startsWith('v') && !alive.has(k.slice(1, k.lastIndexOf(':')))) this.engine.releaseState(pr, k);
+    for (const [id, c] of this.texts) if (!texts.has(id)) { this.engine.deleteTexture(c.tex); this.texts.delete(id); }
+  }
+
   /* ---------- export ---------- */
   /** Avant et après un export : repart de tampons d'effets vierges et rend la mémoire des images pleine taille. */
   resetExportState(w: number, h: number) {
     for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect') this.engine.releaseState(pr, 'x');
     const key = w + 'x' + h, s = this.sets.get(key);
-    if (s && !(w === this.vw && h === this.vh) && !(w === TW && h === TH)) { [s.fit, ...s.ping, s.ra, s.rb, s.out].forEach(t => this.engine.freeTarget(t)); this.sets.delete(key); }
+    if (s && !(w === this.vw && h === this.vh) && !(w === TW && h === TH)) { [s.fit, ...s.ping, s.ra, s.rb, s.out, ...s.acc].forEach(t => this.engine.freeTarget(t)); this.sets.delete(key); }
+    for (const c of this.texts.values()) c.key = ''; // les titres seront redessinés à la taille de l'aperçu
   }
-  /** Libère les tampons des effets retirés du projet. */
-  private collectEffectState() {
-    const p = this.getProject(), alive = new Set<string>();
-    for (const c of p.video) { alive.add('col' + c.id); for (const f of c.fx) alive.add(f.uid); }
-    for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect')
-      for (const k of Object.keys(pr.state)) if (k.startsWith('v') && !alive.has(k.slice(1, k.lastIndexOf(':')))) this.engine.releaseState(pr, k);
-  }
+
   /** Amène les sources exactement à l'instant t puis rend l'image w×h. Renvoie les pixels RGBA, lignes de bas en haut. */
   async renderExact(p: Project, t: number, w: number, h: number, into: Uint8Array): Promise<Uint8Array> {
-    const f = this.frameAt(p, t), wants = f ? (f.b ? [f.a, f.b] : [f.a]) : [];
+    const f = this.frameAt(p, t), layers = this.layersAt(p, t);
+    const wants: { clip: Clip; time: number }[] = [...(f ? (f.b ? [f.a, f.b] : [f.a]) : []), ...layers.filter(l => !l.clip.text).map(l => ({ clip: l.clip, time: l.clip.in + l.local }))];
     // Seules les sources de l'image en cours restent ouvertes : un long projet n'accumule pas les décodeurs.
     const keep = new Set(wants.map(x => x.clip.id));
     for (const id of [...this.sources.keys()]) if (!keep.has(id)) this.dropSource(id);
@@ -377,7 +463,7 @@ export class Player {
     }
     const set = this.set(w, h);
     this.frameNo = Math.round(t * p.fps); // numéro d'image stable, indépendant de la vitesse de rendu
-    this.compose(p, f, w, h, set.out, 'x', t);
+    this.compose(f, layers, w, h, set.out, 'x', t);
     return this.engine.readPixels(w, h, set.out, into);
   }
 }

@@ -83,6 +83,7 @@ export class Engine {
   readonly gl: WebGL2RenderingContext;
   private copy: Linked;
   private fit: Linked;
+  private mix: Linked;
   private floatOk: boolean;
 
   constructor(readonly canvas: HTMLCanvasElement | OffscreenCanvas) {
@@ -101,9 +102,17 @@ export class Engine {
     this.copy = this.link(vs, '#version 300 es\nprecision highp float;in vec2 v;uniform sampler2D t;out vec4 o;void main(){o=vec4(texture(t,v).rgb,1.);}');
     // Place l'image source dans le cadre du projet : ajustement sans déformation, puis échelle, position, rotation.
     this.fit = this.link(vs, `#version 300 es
-precision highp float;in vec2 v;uniform sampler2D t;uniform vec2 box;uniform vec2 off;uniform float scale,rot,aspect;out vec4 o;
+precision highp float;in vec2 v;uniform sampler2D t;uniform vec2 box;uniform vec2 off;uniform float scale,rot,aspect,keepAlpha;out vec4 o;
 void main(){vec2 p=(v-.5)*vec2(aspect,1.)-off*vec2(aspect,1.);float c=cos(rot),s=sin(rot);p=vec2(c*p.x+s*p.y,-s*p.x+c*p.y)/scale;
-vec2 uv=p/box+.5;o=(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)?vec4(0.,0.,0.,1.):vec4(texture(t,uv).rgb,1.);}`);
+vec2 uv=p/box+.5;bool outside=uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.;vec4 px=texture(t,uv);
+o=keepAlpha>.5?(outside?vec4(0.):px):(outside?vec4(0.,0.,0.,1.):vec4(px.rgb,1.));}`);
+    // Pose une couche sur une image : la couverture vient du masque (alpha), la couleur de la couche, selon un mode de fusion.
+    this.mix = this.link(vs, `#version 300 es
+precision highp float;in vec2 v;uniform sampler2D base,top,mask;uniform float opacity;uniform int mode;out vec4 o;
+void main(){vec3 b=texture(base,v).rgb;float m=texture(mask,v).a;vec3 t=texture(top,v).rgb;if(m>.001)t=min(t/m,1.);float a=m*opacity;vec3 r=t;
+if(mode==1)r=1.-(1.-b)*(1.-t);else if(mode==2)r=b*t;else if(mode==3)r=min(b+t,1.);
+else if(mode==4)r=mix(2.*b*t,1.-2.*(1.-b)*(1.-t),step(.5,b));
+o=vec4(mix(b,r,a),1.);}`);
   }
 
   private compile(type: number, src: string): WebGLShader {
@@ -182,6 +191,7 @@ vec2 uv=p/box+.5;o=(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)?vec4(0.,0.,0.,1.):vec4(t
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); // alpha prémultiplié : les bords des titres et des PNG restent propres une fois redimensionnés
     try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source); return true; } catch { return false; }
   }
   deleteTexture(tex: WebGLTexture) { this.gl.deleteTexture(tex); }
@@ -299,7 +309,7 @@ vec2 uv=p/box+.5;o=(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)?vec4(0.,0.,0.,1.):vec4(t
   }
 
   /** Dessine une source srcW×srcH dans un cadre w×h en conservant ses proportions, avec transformation. */
-  drawFit(tex: WebGLTexture, srcW: number, srcH: number, w: number, h: number, out: Target | null, tf: Transform = { scale: 1, x: 0, y: 0, rot: 0 }) {
+  drawFit(tex: WebGLTexture, srcW: number, srcH: number, w: number, h: number, out: Target | null, tf: Transform = { scale: 1, x: 0, y: 0, rot: 0 }, keepAlpha = false) {
     const gl = this.gl, p = this.fit, A = w / h, sa = (srcW || w) / (srcH || h);
     gl.useProgram(p.prog);
     this.bind(out, w, h);
@@ -310,6 +320,18 @@ vec2 uv=p/box+.5;o=(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)?vec4(0.,0.,0.,1.):vec4(t
     gl.uniform1f(this.u(p, 'scale'), Math.max(0.01, tf.scale));
     gl.uniform1f(this.u(p, 'rot'), tf.rot * Math.PI / 180);
     gl.uniform1f(this.u(p, 'aspect'), A);
+    gl.uniform1f(this.u(p, 'keepAlpha'), keepAlpha ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  /** Fusionne une couche sur une image de base. mask fournit la couverture (son canal alpha). mode : 0 normal, 1 écran, 2 produit, 3 addition, 4 incrustation. */
+  layer(base: WebGLTexture, top: WebGLTexture, mask: WebGLTexture, opacity: number, mode: number, w: number, h: number, out: Target | null) {
+    const gl = this.gl, p = this.mix;
+    gl.useProgram(p.prog);
+    this.bind(out, w, h);
+    [['base', base], ['top', top], ['mask', mask]].forEach(([n, t], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t as WebGLTexture); gl.uniform1i(this.u(p, n as string), i); });
+    gl.uniform1f(this.u(p, 'opacity'), opacity);
+    gl.uniform1i(this.u(p, 'mode'), mode);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 

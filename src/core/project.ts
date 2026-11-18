@@ -1,10 +1,13 @@
-/** Lecture d'un fichier de projet. Le contenu peut venir d'un inconnu : tout est vérifié, borné et reconstruit champ par champ. */
-import { MIN_CLIP, type Clip, type FxInstance, type Media, type Params, type ParamValue, type Project, type TransitionInstance } from './types';
+/** Lecture d'un fichier de projet. Le contenu peut venir d'un inconnu : tout est vérifié, borné et reconstruit champ par champ.
+ *  Les projets de version 1 (sans incrustations ni titres) sont repris tels quels. */
+import { BLEND_MODES, MIN_CLIP, TEXT_ANIMS, defaultText, type BlendMode, type Clip, type FxInstance, type Media, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TransitionInstance } from './types';
 
 const MAX_MEDIA = 2000, MAX_CLIPS = 5000, MAX_FX = 32, MAX_PARAMS = 64;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, max: number, def = '') => (typeof v === 'string' ? v.slice(0, max) : def);
 const num = (v: unknown, lo: number, hi: number, def: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def);
+const color = (v: unknown, def: string) => (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : def);
+const oneOf = <T extends string>(v: unknown, list: readonly T[], def: T): T => (list.includes(v as T) ? (v as T) : def);
 
 function paramValue(v: unknown): ParamValue | undefined {
   if (typeof v === 'boolean') return v;
@@ -38,14 +41,31 @@ function transition(v: unknown): TransitionInstance | null {
   return { effectId: str(v.effectId, 200), params: p, dur: num(v.dur, 0.2, 10, 1) };
 }
 
-function clip(v: unknown, mediaIds: Set<string>): Clip | null {
-  if (!isObj(v) || typeof v.id !== 'string' || typeof v.mediaId !== 'string' || !mediaIds.has(v.mediaId)) return null;
-  const t = isObj(v.transform) ? v.transform : {};
+function text(v: unknown): TextStyle | null {
+  if (!isObj(v)) return null;
+  const d = defaultText();
   return {
-    id: str(v.id, 80), mediaId: v.mediaId, in: num(v.in, 0, 86400 * 4, 0), dur: num(v.dur, MIN_CLIP, 86400, 1), volume: num(v.volume, 0, 1, 1),
+    content: str(v.content, 2000, d.content), font: str(v.font, 80, d.font).replace(/["'<>;{}\\]/g, ''), size: num(v.size, 0.01, 1, d.size), weight: Math.round(num(v.weight, 100, 900, d.weight)),
+    color: color(v.color, d.color), align: oneOf(v.align, ['left', 'center', 'right'] as const, d.align),
+    stroke: num(v.stroke, 0, 0.5, 0), strokeColor: color(v.strokeColor, d.strokeColor), shadow: num(v.shadow, 0, 1, 0),
+    box: num(v.box, 0, 1, 0), boxColor: color(v.boxColor, d.boxColor),
+    animIn: oneOf<TextAnim>(v.animIn, TEXT_ANIMS, 'none'), animOut: oneOf<TextAnim>(v.animOut, TEXT_ANIMS, 'none'), animDur: num(v.animDur, 0.05, 5, d.animDur),
+  };
+}
+
+function clip(v: unknown, mediaIds: Set<string>, isText: boolean): Clip | null {
+  if (!isObj(v) || typeof v.id !== 'string') return null;
+  const style = isText ? text(v.text) : null;
+  if (isText ? !style : typeof v.mediaId !== 'string' || !mediaIds.has(v.mediaId)) return null;
+  const t = isObj(v.transform) ? v.transform : {};
+  const dur = num(v.dur, MIN_CLIP, 86400, 1);
+  return {
+    id: str(v.id, 80), mediaId: isText ? '' : (v.mediaId as string), start: num(v.start, 0, 86400 * 4, 0), in: num(v.in, 0, 86400 * 4, 0), dur,
+    volume: num(v.volume, 0, 1, 1), fadeIn: num(v.fadeIn, 0, dur, 0), fadeOut: num(v.fadeOut, 0, dur, 0),
     transform: { scale: num(t.scale, 0.01, 20, 1), x: num(t.x, -5, 5, 0), y: num(t.y, -5, 5, 0), rot: num(t.rot, -3600, 3600, 0) },
-    color: params(v.color), fx: (Array.isArray(v.fx) ? v.fx : []).slice(0, MAX_FX).map(fx).filter((f): f is FxInstance => !!f),
-    transition: transition(v.transition),
+    opacity: num(v.opacity, 0, 1, 1), blend: oneOf<BlendMode>(v.blend, BLEND_MODES, 'normal'),
+    color: params(v.color), fx: isText ? [] : (Array.isArray(v.fx) ? v.fx : []).slice(0, MAX_FX).map(fx).filter((f): f is FxInstance => !!f),
+    transition: transition(v.transition), text: style,
   };
 }
 
@@ -53,18 +73,25 @@ function clip(v: unknown, mediaIds: Set<string>): Clip | null {
 export function parseProject(json: string): Project | null {
   let raw: unknown;
   try { raw = JSON.parse(json); } catch { return null; }
-  if (!isObj(raw) || raw.version !== 1 || !Array.isArray(raw.media) || !Array.isArray(raw.video) || !Array.isArray(raw.audio)) return null;
+  if (!isObj(raw) || (raw.version !== 1 && raw.version !== 2) || !Array.isArray(raw.media) || !Array.isArray(raw.video) || !Array.isArray(raw.audio)) return null;
   const seen = new Set<string>();
   const med = raw.media.slice(0, MAX_MEDIA).map(media).filter((m): m is Media => !!m && !seen.has(m.id) && !!seen.add(m.id));
   const ids = new Set(med.map(m => m.id)), kindOf = new Map(med.map(m => [m.id, m.kind]));
   const clipIds = new Set<string>();
-  const track = (list: unknown[], audio: boolean) => list.slice(0, MAX_CLIPS).map(c => clip(c, ids))
-    .filter((c): c is Clip => !!c && (kindOf.get(c.mediaId) === 'audio') === audio && !clipIds.has(c.id) && !!clipIds.add(c.id));
-  const video = track(raw.video, false), audio = track(raw.audio, true);
-  // Une transition n'existe qu'entre deux clips vidéo.
-  video.forEach((c, i) => { const next = video[i + 1]; if (!next) c.transition = null; else if (c.transition) c.transition.dur = Math.max(0.2, Math.min(c.transition.dur, c.dur, next.dur)); });
+  const fresh = (c: Clip | null): c is Clip => !!c && !clipIds.has(c.id) && !!clipIds.add(c.id);
+  const mediaTrack = (list: unknown, audio: boolean) => (Array.isArray(list) ? list : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, false))
+    .filter((c): c is Clip => !!c && (kindOf.get(c.mediaId) === 'audio') === audio).filter(fresh);
+  const video = mediaTrack(raw.video, false), audio = mediaTrack(raw.audio, true), overlay = mediaTrack(raw.overlay, false);
+  const titles = (Array.isArray(raw.text) ? raw.text : []).slice(0, MAX_CLIPS).map(c => clip(c, ids, true)).filter(fresh);
+  // Une transition n'existe qu'entre deux clips de la piste principale.
+  video.forEach((c, i) => { const next = video[i + 1]; if (!next) c.transition = null; else if (c.transition) c.transition.dur = Math.min(c.dur, next.dur, Math.max(0.2, c.transition.dur)); });
   audio.forEach(c => { c.transition = null; c.fx = []; });
+  // Pistes libres : triées, sans recouvrement (un clip qui en chevauche un autre est repoussé après lui).
+  for (const list of [overlay, titles]) {
+    list.sort((a, b) => a.start - b.start);
+    list.forEach((c, i) => { c.transition = null; const prev = list[i - 1]; if (prev && c.start < prev.start + prev.dur) c.start = prev.start + prev.dur; });
+  }
   const even = (n: number) => Math.round(n / 2) * 2;
-  return { version: 1, name: str(raw.name, 120, 'Projet sans titre'), width: even(num(raw.width, 16, 8192, 1920)), height: even(num(raw.height, 16, 8192, 1080)),
-    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio };
+  return { version: 2, name: str(raw.name, 120, 'Projet sans titre'), width: even(num(raw.width, 16, 8192, 1920)), height: even(num(raw.height, 16, 8192, 1080)),
+    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, overlay, text: titles };
 }

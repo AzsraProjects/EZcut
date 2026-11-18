@@ -2,7 +2,9 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Media } from '../core/types';
 import type { CatItem } from '../effects/catalog';
 import { player, TH, TW } from '../engine/player';
-import { addToTimeline, applyItem, catalogList } from './actions';
+import { animState, drawText } from '../engine/text';
+import { addTitle, addToTimeline, applyItem, catalogList } from './actions';
+import { TITLES, type TitlePreset } from './titles';
 import { Icon } from './Icon';
 import { importWithDialog } from './media';
 import { useStore, type Tab } from './store';
@@ -10,6 +12,7 @@ import { timecode } from './time';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'media', label: 'Médias', icon: 'film' },
+  { id: 'titles', label: 'Titres', icon: 'type' },
   { id: 'effects', label: 'Effets', icon: 'fx' },
   { id: 'filters', label: 'Filtres', icon: 'drop' },
   { id: 'transitions', label: 'Transitions', icon: 'trans' },
@@ -41,13 +44,38 @@ const FxTile = memo(function FxTile({ item, observe }: { item: CatItem; observe:
   );
 });
 
+/** Modèle de titre : dessiné en 2D, animé au survol avec ses propres animations d'entrée et de sortie. */
+function TitleTile({ preset }: { preset: TitlePreset }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const raf = useRef(0);
+  const draw = (local: number) => {
+    const c = canvas.current, ctx = c?.getContext('2d');
+    if (!c || !ctx) return;
+    const a = animState(preset.style, local, 3), tf = preset.transform ?? {};
+    drawText(ctx, TW, TH, preset.style, a.chars);
+    // même placement que dans l'image : décalage en fraction du cadre, vers le haut pour y positif
+    c.style.opacity = String(a.alpha);
+    c.style.transform = `translate(${(tf.x ?? 0) * 100}%, ${-((tf.y ?? 0) + a.dy) * 100}%) scale(${a.scale})`;
+  };
+  useEffect(() => { draw(1.5); return () => cancelAnimationFrame(raf.current); }, []);
+  const enter = () => { const t0 = performance.now(); const loop = (now: number) => { draw(((now - t0) / 1000) % 3); raf.current = requestAnimationFrame(loop); }; cancelAnimationFrame(raf.current); raf.current = requestAnimationFrame(loop); };
+  const leave = () => { cancelAnimationFrame(raf.current); draw(1.5); };
+  return (
+    <button className="tile title-tile" title="Ajouter ce titre à la tête de lecture" onPointerEnter={enter} onPointerLeave={leave} onFocus={enter} onBlur={leave} onClick={() => addTitle(preset.style, preset.transform)}>
+      <span className="thumb"><canvas ref={canvas} width={TW} height={TH} /><span className="add"><Icon name="plus" /></span></span>
+      <span className="tname">{preset.label}</span>
+      <span className="tby">{preset.cat}</span>
+    </button>
+  );
+}
+
 function MediaTile({ m }: { m: Media }) {
   const poster = useStore(s => s.thumbs[m.id]?.poster);
   const fps = useStore(s => s.project.fps);
   return (
-    <button className="tile" title="Cliquer ou glisser pour ajouter à la timeline" draggable
+    <button className="tile" title="Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture." draggable
       onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-media', m.id); e.dataTransfer.effectAllowed = 'copy'; }}
-      onClick={() => addToTimeline(m.id)}>
+      onClick={e => addToTimeline(m.id, e.shiftKey)}>
       <span className="thumb">
         {poster ? <img src={poster} alt="" draggable={false} /> : <span className="ph-ico"><Icon name={m.kind === 'audio' ? 'music' : m.kind === 'image' ? 'image' : 'film'} /></span>}
         {m.kind !== 'image' && <span className="dur">{timecode(m.duration, fps)}</span>}
@@ -73,7 +101,7 @@ export function Library() {
 
   useEffect(() => { setCat('Tous'); setQ(''); }, [tab]);
 
-  const list = useMemo(() => (ready && tab !== 'media' ? catalogList(tab) : []), [ready, tab]);
+  const list = useMemo(() => (ready && tab !== 'media' && tab !== 'titles' ? catalogList(tab) : []), [ready, tab]);
   const cats = useMemo(() => {
     const n: Record<string, number> = {};
     list.forEach(it => it.cat.forEach(c => { n[c] = (n[c] ?? 0) + 1; }));
@@ -115,6 +143,13 @@ export function Library() {
               ? <div className="empty"><Icon name="import" /><b>Déposez vos vidéos, sons et images ici</b><span>ou cliquez sur Importer. Un clic sur un média l'ajoute à la timeline.</span></div>
               : media.map(m => <MediaTile key={m.id} m={m} />)}
           </div>
+          {media.length > 0 && <div className="libfoot"><span>Clic : ajouter à la suite</span><span>· <kbd>Maj</kbd> + clic ou glisser sur V2 : incrustation</span></div>}
+        </div>
+      ) : tab === 'titles' ? (
+        <div className="libmain solo">
+          <div className="libbar"><span className="count" style={{ marginLeft: 0 }}>{TITLES.length} modèles</span></div>
+          <div className="tiles">{TITLES.map(t => <TitleTile key={t.id} preset={t} />)}</div>
+          <div className="libfoot"><span>Survol : aperçu de l'animation</span><span>· Clic : ajouter à la tête de lecture</span><span>· Texte et style se règlent dans l'inspecteur</span></div>
         </div>
       ) : (
         <div className="libbody">
