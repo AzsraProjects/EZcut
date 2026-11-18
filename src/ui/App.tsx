@@ -10,7 +10,7 @@ import { ExportDialog } from './ExportDialog';
 import { Updates } from './Updates';
 import { ClaudeLink } from './ClaudeLink';
 import { ContextMenu } from './ContextMenu';
-import { copyClip, detachSound, duplicateSelection, freezeFrame, pasteClip, toggleMute, trimToPlayhead } from './menus';
+import { copyClip, copyEffects, detachSound, duplicateSelection, freezeFrame, pasteClip, pasteEffects, rotateClip, toggleMute, trimToPlayhead } from './menus';
 import { connectControl } from './control';
 import { captureErrors, log } from './log';
 import { Icon } from './Icon';
@@ -103,7 +103,15 @@ export function App() {
       if (mod && k === 'y') { e.preventDefault(); st().redo(); return; }
       if (mod && k === 's') { e.preventDefault(); void saveProject(e.shiftKey); return; }
       if (mod && k === 'o') { e.preventDefault(); void openProject(); return; }
+      if (mod && e.altKey && !typing()) {
+        const s = st().sel;
+        if (k === 'c') { e.preventDefault(); copyEffects(); return; }
+        if (k === 'v') { e.preventDefault(); pasteEffects(); return; }
+        if (e.key === 'ArrowRight' && s?.kind === 'clip') { e.preventDefault(); rotateClip(s.id, -90); return; }
+        if (e.key === 'ArrowLeft' && s?.kind === 'clip') { e.preventDefault(); rotateClip(s.id, 90); return; }
+      }
       if (mod && !typing()) {
+        if (k === 'b') { e.preventDefault(); splitAtPlayhead(); return; }
         if (k === 'c') { e.preventDefault(); copyClip(); return; }
         if (k === 'x') { e.preventDefault(); copyClip(true); return; }
         if (k === 'v') { e.preventDefault(); pasteClip(); return; }
@@ -111,6 +119,7 @@ export function App() {
         if (k === 'm' && e.shiftKey) { e.preventDefault(); const s = st().sel; if (s?.kind === 'clip') toggleMute(s.id); return; }
       }
       if (e.altKey && k === 'f' && !typing()) { e.preventDefault(); freezeFrame(); return; }
+      if (e.altKey && !mod && !typing() && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { e.preventDefault(); trimToPlayhead(e.code === 'BracketLeft' ? 'start' : 'end'); return; }
       if (mod && e.altKey && k === 'd' && !typing()) { e.preventDefault(); detachSound(); return; }
       if (typing() || mod) return;
       const active = document.activeElement as HTMLElement | null, onRange = (active as HTMLInputElement | null)?.type === 'range';

@@ -23,6 +23,9 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Zoom de la timeline avec Ctrl + molette, centré sur le pointeur.
 - Clic droit sur un clip, une piste, une transition ou un média : couper, copier, coller, dupliquer, rogner jusqu'à la tête de lecture, pivoter, retourner, copier les effets d'un clip à l'autre, retirer un média.
 - Arrêt sur image à la tête de lecture.
+- Volume à la souris : la ligne blanche d'un clip sonore se tire vers le haut ou le bas (Maj pour un réglage fin, double-clic pour revenir à 100 %).
+- Désactiver un clip sans le supprimer ; insérer un média à la tête de lecture.
+- Raccourcis identiques à ceux de Filmora pour couper, rogner, pivoter, détacher le son, copier les effets.
 - Détacher le son d'une vidéo sur une piste Son à part, où il se règle, se coupe et se déplace seul ; la musique a sa propre piste, et s'y place librement.
 - Fondus à la souris : une poignée dans chaque coin d'un clip règle le fondu de l'image (ou du son, sur les pistes de son).
 - Rogner le début d'un clip suit la souris : le bord gauche se déplace, et la bande d'images défile dessous.

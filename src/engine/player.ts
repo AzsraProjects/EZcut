@@ -187,7 +187,7 @@ export class Player {
   }
   /** Incrustations puis titres présents à l'instant t, du dessous vers le dessus. */
   private layersAt(p: Project, t: number): Layer[] {
-    return [...activeAt(p.overlay, t), ...activeAt(p.text, t)].map(clip => ({ clip, local: t - clip.start }));
+    return [...activeAt(p.overlay, t), ...activeAt(p.text, t)].filter(clip => !clip.off).map(clip => ({ clip, local: t - clip.start }));
   }
 
   private syncVideo(p: Project, f: Frame | null, layers: Layer[], t: number) {
@@ -200,7 +200,7 @@ export class Player {
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement;
       el.volume = clamp(w.clip.volume * fadeGain(w.clip, w.time - w.clip.in), 0, 1);
-      el.muted = this.muted || !w.live || w.clip.still;
+      el.muted = this.muted || !w.live || w.clip.still || w.clip.off;
       if (w.live && this.playing && !w.clip.still) {
         if (el.paused) { if (el.ended || Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time; el.play().catch(() => {}); }
         else if (this.jumped && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
@@ -249,7 +249,7 @@ export class Player {
 
   private syncAudio(p: Project, t: number) {
     const all = [...p.audio, ...p.sound], active = new Set<string>();
-    for (const clip of [...activeAt(p.audio, t), ...activeAt(p.sound, t)]) {
+    for (const clip of [...activeAt(p.audio, t), ...activeAt(p.sound, t)].filter(c => !c.off)) {
       active.add(clip.id);
       let a = this.audios.get(clip.id);
       const media = p.media.find(m => m.id === clip.mediaId);
@@ -289,7 +289,7 @@ export class Player {
   }
   private clipFrame(clip: Clip, w: number, h: number, out: Target | null, set: TargetSet, key: string, time: number, extra?: ChainItem) {
     const s = this.sources.get(clip.id);
-    if (!s || !s.loaded) { this.engine.clear(w, h, out); return; }
+    if (!s || !s.loaded || clip.off) { this.engine.clear(w, h, out); return; }
     this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform);
     const ch = this.chainFor(clip, key);
     if (extra) ch.push(extra);

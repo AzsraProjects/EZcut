@@ -64,6 +64,19 @@ function ClipView({ clip, index, track, start, pps, project, shift, onShift }: {
       st().apply(p => patchClip(p, clip.id, c => { c[key] = Math.max(0, Math.min(c.dur - c[other], v0 + d)); }), false);
     });
   };
+  // Volume : la ligne horizontale du clip se tire de bas (silence) en haut (100 %). La course est la même quelle que soit
+  // la hauteur de la piste : 150 pixels pour toute la plage, quatre fois plus avec Maj pour un réglage fin.
+  const [volDrag, setVolDrag] = useState(false);
+  const vol = (e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const y0 = e.clientY, v0 = clip.volume;
+    st().checkpoint(); st().select({ kind: 'clip', id: clip.id }); setVolDrag(true);
+    capture(e, ev => {
+      const v = Math.max(0, Math.min(1, v0 - (ev.clientY - y0) / (ev.shiftKey ? 600 : 150)));
+      st().apply(p => patchClip(p, clip.id, c => { c.volume = Math.round(v * 100) / 100; }), false);
+    }, () => setVolDrag(false));
+  };
+
   // Piste libre : le clip se déplace dans le temps en le faisant glisser ; un simple clic le sélectionne et y place la tête de lecture.
   const slide = (e: React.PointerEvent) => {
     if (!free || e.button !== 0) return;
@@ -95,7 +108,7 @@ function ClipView({ clip, index, track, start, pps, project, shift, onShift }: {
   const muted = hasSound && clip.volume <= 0;
   const width = Math.max(4, clip.dur * pps);
   return (
-    <div className={`clip ${track}${selected ? ' sel' : ''}${clip.still ? ' still' : ''}`} role="button" tabIndex={0} aria-pressed={selected} draggable={!free} data-clip={clip.id}
+    <div className={`clip ${track}${selected ? ' sel' : ''}${clip.still ? ' still' : ''}${clip.off ? ' off' : ''}`} role="button" tabIndex={0} aria-pressed={selected} draggable={!free} data-clip={clip.id}
       // La bande d'images glisse avec le point d'entrée : en rognant le début, on voit le contenu défiler sous le bord.
       style={{ left: (start + shift) * pps, width, backgroundImage: (track === 'video' || track === 'overlay') && strip ? `url("${strip}")` : undefined, backgroundPositionX: clip.still ? 0 : -clip.in * pps }}
       onContextMenu={e => { e.stopPropagation(); openMenu(e, menuForClip(clip.id)); }}
@@ -105,6 +118,8 @@ function ClipView({ clip, index, track, start, pps, project, shift, onShift }: {
       {fin > 0 && <span className="fade in" style={{ width: fin * pps }} />}
       {fout > 0 && <span className="fade out" style={{ width: fout * pps }} />}
       <em>{muted && <Icon name="mute" />}{label}{clip.fx.length > 0 && <b>fx {clip.fx.length}</b>}</em>
+      {hasSound && width > 60 && <span className={volDrag ? 'vol on' : 'vol'} style={{ bottom: `calc(2px + ${clip.volume} * (100% - 22px))` }} draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={vol}
+        onDoubleClick={e => { e.stopPropagation(); st().apply(p => patchClip(p, clip.id, c => { c.volume = 1; })); }} title={`Volume : ${Math.round(clip.volume * 100)} % — tirez vers le haut ou le bas (Maj : réglage fin, double-clic : 100 %)`}>{volDrag && <b>{Math.round(clip.volume * 100)} %</b>}</span>}
       <span className="grip l" draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={trim('start')} title="Rogner le début" />
       <span className="grip r" draggable={false} onDragStart={e => e.preventDefault()} onPointerDown={trim('end')} title="Rogner la fin" />
       {width > 46 && (visual || hasSound) && <>

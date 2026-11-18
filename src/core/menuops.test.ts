@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addFx, addMedia, addOverlay, appendClip, duplicateClip, freezeAt, insertCopy, projectDuration, removeMedia, setTransition, trimClip } from './ops';
+import { addFx, addMedia, addOverlay, appendClip, duplicateClip, freezeAt, insertAt, insertCopy, projectDuration, removeMedia, setTransition, trimClip } from './ops';
 import { parseProject } from './project';
 import { emptyProject, type Media, type Project } from './types';
 
@@ -45,8 +45,8 @@ describe('arrêt sur image', () => {
   it('fige l\'image sous la tête de lecture et pousse la suite', () => {
     const p0 = base(), r = freezeAt(p0, 2)!;
     const v = r.project.video;
-    expect(v.map(c => [c.still, c.in, c.dur])).toEqual([[false, 0, 2], [true, 2, 2], [false, 2, 4], [false, 0, 4]]);
-    expect(projectDuration(r.project)).toBe(projectDuration(p0) + 2);
+    expect(v.map(c => [c.still, c.in, c.dur])).toEqual([[false, 0, 2], [true, 2, 5], [false, 2, 4], [false, 0, 4]]);
+    expect(projectDuration(r.project)).toBe(projectDuration(p0) + 5);
     expect(v[1].fx).toHaveLength(1);             // l'image figée garde le look du clip
     expect(v[2].transition?.effectId).toBe('glt:Fade'); // la transition reste sur la coupe d'origine
     expect(v[0].transition).toBeNull();
@@ -60,10 +60,15 @@ describe('arrêt sur image', () => {
   it('n\'a pas de durée maximale, et survit à un enregistrement', () => {
     const r = freezeAt(base(), 2)!;
     const longer = trimClip(r.project, r.clipId, 'end', 60);
-    expect(longer.video[1].dur).toBe(62);
+    expect(longer.video[1].dur).toBe(65);
     const back = parseProject(JSON.stringify(longer))!;
     expect(back.video[1].still).toBe(true);
     expect(back.video[1].in).toBe(2);
+  });
+  it('insère un média à la tête de lecture en coupant le clip en cours', () => {
+    const p0 = base(), r = insertAt(p0, 'logo', 2)!;
+    expect(r.project.video.map(c => [c.mediaId, c.dur])).toEqual([['a', 2], ['logo', 5], ['a', 4], ['b', 4]]);
+    expect(insertAt(emptyProject(), 'x', 0)).toBeNull();
   });
   it('ne fait rien hors de la piste principale', () => {
     expect(freezeAt(emptyProject(), 1)).toBeNull();

@@ -46,7 +46,7 @@ export function findClip(p: Project, id: string): { track: TrackId; index: numbe
 }
 
 function blankClip(dur: number): Clip {
-  return { id: newId('clip'), mediaId: '', start: 0, in: 0, dur, volume: 1, fadeIn: 0, fadeOut: 0, vfadeIn: 0, vfadeOut: 0, transform: { scale: 1, x: 0, y: 0, rot: 0 }, opacity: 1, blend: 'normal', color: {}, fx: [], transition: null, text: null, still: false };
+  return { id: newId('clip'), mediaId: '', start: 0, in: 0, dur, volume: 1, fadeIn: 0, fadeOut: 0, vfadeIn: 0, vfadeOut: 0, transform: { scale: 1, x: 0, y: 0, rot: 0 }, opacity: 1, blend: 'normal', color: {}, fx: [], transition: null, text: null, still: false, off: false };
 }
 export function makeClip(media: Media): Clip {
   return { ...blankClip(media.kind === 'image' ? IMAGE_DURATION : Math.max(MIN_CLIP, media.duration)), mediaId: media.id };
@@ -282,8 +282,18 @@ export function removeMedia(p: Project, mediaId: string): Project {
   return n;
 }
 
+/** Insère un média sur la piste principale à l'instant t : le clip en cours est coupé en deux et le média glissé entre les moitiés. */
+export function insertAt(p: Project, mediaId: string, t: number): { project: Project; clipId: string } | null {
+  const media = p.media.find(m => m.id === mediaId);
+  if (!media || media.kind === 'audio') return null;
+  const hit = clipAt(p.video, t);
+  if (!hit) return appendClip(p, mediaId);
+  const cut = splitAt(p, 'video', t);
+  return appendClip(cut, mediaId, cut !== p || hit.local >= hit.clip.dur / 2 ? hit.index + 1 : hit.index);
+}
+
 /** Arrêt sur image : fige l'image sous l'instant t de la piste principale pendant dur secondes, en poussant la suite. */
-export function freezeAt(p: Project, t: number, dur = 2): { project: Project; clipId: string } | null {
+export function freezeAt(p: Project, t: number, dur = 5): { project: Project; clipId: string } | null {
   const hit = clipAt(p.video, t);
   if (!hit || hit.clip.text) return null;
   const media = p.media.find(m => m.id === hit.clip.mediaId);

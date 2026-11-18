@@ -11,7 +11,7 @@ export interface ExportResult { ok: boolean; path?: string; error?: string; canc
 export function audioPlan(p: Project): AudioSegment[][] {
   const seg = (c: Clip): AudioSegment => {
     const m = p.media.find(x => x.id === c.mediaId);
-    return { path: m && m.hasAudio && m.kind !== 'image' && !c.still ? m.path : null, in: c.in, dur: c.dur, volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut };
+    return { path: m && m.hasAudio && m.kind !== 'image' && !c.still && !c.off ? m.path : null, in: c.in, dur: c.dur, volume: c.volume, fadeIn: c.fadeIn, fadeOut: c.fadeOut };
   };
   // Piste libre : les trous entre les clips sont comblés par du silence. Une piste sans aucun son est omise.
   const free = (track: Clip[]): AudioSegment[] => {

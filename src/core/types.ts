@@ -93,6 +93,8 @@ export interface Clip {
   text: TextStyle | null;
   /** Arrêt sur image : le clip montre l'image du média située à `in` pendant toute sa durée, sans son. */
   still: boolean;
+  /** Clip désactivé : il garde sa place mais ne montre ni image ni son, à l'aperçu comme à l'export. */
+  off: boolean;
 }
 
 /** video est magnétique (clips à la suite, sans trou, avec transitions) ; les autres pistes sont libres (chaque clip a sa position).

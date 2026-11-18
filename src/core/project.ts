@@ -66,7 +66,7 @@ function clip(v: unknown, mediaIds: Set<string>, isText: boolean): Clip | null {
     transform: { scale: num(t.scale, 0.01, 20, 1), x: num(t.x, -5, 5, 0), y: num(t.y, -5, 5, 0), rot: num(t.rot, -3600, 3600, 0) },
     opacity: num(v.opacity, 0, 1, 1), blend: oneOf<BlendMode>(v.blend, BLEND_MODES, 'normal'),
     color: params(v.color), fx: isText ? [] : (Array.isArray(v.fx) ? v.fx : []).slice(0, MAX_FX).map(fx).filter((f): f is FxInstance => !!f),
-    transition: transition(v.transition), text: style, still: !isText && v.still === true,
+    transition: transition(v.transition), text: style, still: !isText && v.still === true, off: v.off === true,
   };
 }
 

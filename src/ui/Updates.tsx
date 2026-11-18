@@ -68,8 +68,11 @@ export function Updates() {
               <dt><kbd>Espace</kbd></dt><dd>Lecture, pause</dd>
               <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Image précédente, suivante (avec <kbd>Maj</kbd> : dix images)</dd>
               <dt><kbd>Début</kbd> <kbd>Fin</kbd></dt><dd>Début, fin du montage</dd>
-              <dt><kbd>S</kbd></dt><dd>Couper le clip en deux à la tête de lecture</dd>
-              <dt><kbd>Q</kbd> <kbd>W</kbd></dt><dd>Rogner le début, la fin du clip jusqu'à la tête de lecture</dd>
+              <dt><kbd>S</kbd> ou <kbd>Ctrl</kbd> + <kbd>B</kbd></dt><dd>Couper le clip en deux à la tête de lecture</dd>
+              <dt><kbd>Q</kbd> <kbd>W</kbd> ou <kbd>Alt</kbd> + <kbd>[</kbd> <kbd>]</kbd></dt><dd>Rogner le début, la fin du clip jusqu'à la tête de lecture</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd> / <kbd>V</kbd></dt><dd>Copier, coller les effets d'un clip</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Pivoter le clip de 90°</dd>
+              <dt>Ligne blanche d'un clip sonore</dt><dd>Volume : tirer vers le haut ou le bas (<kbd>Maj</kbd> : réglage fin)</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> / <kbd>D</kbd></dt><dd>Copier, couper, coller, dupliquer un clip</dd>
               <dt><kbd>Alt</kbd> + <kbd>F</kbd></dt><dd>Arrêt sur image à la tête de lecture</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>M</kbd></dt><dd>Couper ou rétablir le son du clip</dd>
