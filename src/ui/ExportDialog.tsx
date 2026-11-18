@@ -47,7 +47,7 @@ export function ExportDialog() {
         {result?.ok && <>
           <p className="done">Vidéo exportée en {result.seconds?.toFixed(1)} s.</p>
           <p className="meta path">{result.path}</p>
-          <footer><button className="btn" onClick={() => { if (result.path) void ez?.showInFolder(result.path); }}><Icon name="folder" />Afficher dans le dossier</button><button className="btn primary" onClick={close}>Terminer</button></footer>
+          <footer><button className="btn" onClick={() => { void ez?.showLastExport(); }}><Icon name="folder" />Afficher dans le dossier</button><button className="btn primary" onClick={close}>Terminer</button></footer>
         </>}
       </div>
     </div>

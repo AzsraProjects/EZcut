@@ -18,17 +18,19 @@ export interface AutoTest { media: string[]; out: string; }
 export interface EzApi {
   pickMedia(): Promise<ImportedFile[]>;
   importPaths(paths: string[]): Promise<ImportedFile[]>;
+  /** Réouverture d'un projet : le processus principal décide, avec l'utilisateur, quels fichiers redeviennent lisibles. */
+  relinkMedia(paths: string[]): Promise<ImportedFile[]>;
+  newProject(): Promise<void>;
   pathForFile(file: File): string;
-  saveProject(json: string, path: string | null): Promise<string | null>;
+  saveProject(json: string, saveAs: boolean): Promise<string | null>;
   openProject(): Promise<{ path: string; json: string } | null>;
   exportStart(req: ExportRequest): Promise<{ ok: true; path: string } | { ok: false; error?: string }>;
   exportFrame(pixels: Uint8Array): Promise<void>;
   exportFinish(): Promise<{ ok: boolean; error?: string; path?: string }>;
   exportCancel(): Promise<void>;
-  showInFolder(path: string): Promise<void>;
+  showLastExport(): Promise<void>;
   autoTest(): Promise<AutoTest | null>;
   autoTestDone(result: unknown): Promise<void>;
-  version: string;
 }
 
 declare global { interface Window { ez?: EzApi; } }

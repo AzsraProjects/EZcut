@@ -1,6 +1,7 @@
 /** Actions de l'interface : relient les gestes de l'utilisateur aux opérations de core. */
 import { addFx, appendClip, clipAt, findClip, removeClip, setTransition, splitAt, trackStarts } from '../core/ops';
 import { emptyProject, type Project } from '../core/types';
+import { parseProject } from '../core/project';
 import { ez } from '../desktop/api';
 import { catalog, defaultsOf, transitionDefaults, type CatItem } from '../effects/catalog';
 import { player } from '../engine/player';
@@ -77,7 +78,7 @@ function serialise(p: Project): string {
 export async function saveProject(saveAs = false): Promise<boolean> {
   const st = S();
   if (!ez) { st.notify('L\'enregistrement n\'est disponible que dans l\'application de bureau.'); return false; }
-  const path = await ez.saveProject(serialise(st.project), saveAs ? null : st.filePath);
+  const path = await ez.saveProject(serialise(st.project), saveAs);
   if (!path) return false;
   st.saved(path); st.notify('Projet enregistré.');
   return true;
@@ -88,11 +89,8 @@ export async function openProject() {
   if (!ez) { st.notify('L\'ouverture n\'est disponible que dans l\'application de bureau.'); return; }
   const r = await ez.openProject();
   if (!r) return;
-  let p: Project;
-  try {
-    p = JSON.parse(r.json) as Project;
-    if (p.version !== 1 || !Array.isArray(p.media) || !Array.isArray(p.video) || !Array.isArray(p.audio)) throw new Error('format');
-  } catch { st.notify('Ce fichier n\'est pas un projet EZcut lisible.'); return; }
+  const p = parseProject(r.json);
+  if (!p) { st.notify('Ce fichier n\'est pas un projet EZcut lisible.'); return; }
   // Les effets inconnus de cette version sont conservés mais ignorés au rendu.
   player.pause(); player.seek(0);
   st.load(p, r.path);
@@ -101,6 +99,7 @@ export async function openProject() {
 }
 
 export function newProject() {
+  void ez?.newProject();
   player.pause(); player.seek(0);
   S().load(emptyProject(), null);
 }

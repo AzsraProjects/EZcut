@@ -1,14 +1,19 @@
 // Processus principal : fenêtre, accès aux fichiers, FFmpeg. Seul endroit du projet qui parle au système.
-const { app, BrowserWindow, dialog, ipcMain, protocol, shell } = require('electron');
+// L'interface est considérée comme non fiable : elle affiche des projets qui peuvent venir d'un inconnu.
+const { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
+const { pathToFileURL } = require('node:url');
 
-const DEV_URL = process.env.EZCUT_DEV_URL || '';
-const FFMPEG = process.env.EZCUT_FFMPEG || 'ffmpeg';
-const FFPROBE = process.env.EZCUT_FFPROBE || 'ffprobe';
-const AUTOTEST = process.env.EZCUT_AUTOTEST || ''; // chemin d'un JSON { media: [...], out: "..." } : test d'intégration sans interface
+// Les modes développement et test ne sont jamais actifs dans une version installée.
+const DEV_URL = app.isPackaged ? '' : process.env.EZCUT_DEV_URL || '';
+const AUTOTEST = app.isPackaged ? '' : process.env.EZCUT_AUTOTEST || ''; // JSON { media: [...], out: "..." } : test d'intégration sans interface
+const DIST = path.join(__dirname, '..', 'dist');
+const APP_ORIGIN = 'app://ezcut';
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ezmedia:; media-src 'self' blob: ezmedia:; connect-src 'self' ezmedia:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'";
+const MAX_PROJECT_BYTES = 50e6, MAX_MEDIA = 2000, MAX_SEGMENTS = 5000;
 
 const EXT = {
   video: ['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'],
@@ -19,15 +24,68 @@ const MIME = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktim
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.opus': 'audio/ogg',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp' };
 const kindOf = p => { const e = path.extname(p).toLowerCase(); return Object.keys(EXT).find(k => EXT[k].includes(e)) || null; };
+const num = (v, lo, hi, def) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def; };
 
-/** Fichiers que l'interface a le droit de lire : uniquement ceux que l'utilisateur a importés ou ouverts. */
+/** Programme résolu une fois, en chemin absolu, sans jamais regarder le dossier courant (un projet reçu pourrait y cacher un faux ffmpeg.exe). */
+function resolveTool(name, override) {
+  if (!app.isPackaged && override && path.isAbsolute(override) && fs.existsSync(override)) return override;
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir || !path.isAbsolute(dir)) continue;
+    for (const ext of exts) { const f = path.join(dir, name + ext); try { if (fs.statSync(f).isFile()) return f; } catch { /* suivant */ } }
+  }
+  return null;
+}
+let FFMPEG = null, FFPROBE = null;
+
+/** Fichiers que l'interface a le droit de lire : uniquement ceux que l'utilisateur a importés, ou acceptés à l'ouverture d'un projet. */
 const allowed = new Set();
 const mediaUrl = p => 'ezmedia://local/' + encodeURIComponent(p);
+
+/** Fichier local ordinaire à extension média. Refuse les chemins réseau (UNC), relatifs, les dossiers et les liens vers autre chose. */
+function localFile(p) {
+  if (typeof p !== 'string' || p.length > 1024 || p.includes('\0') || !path.isAbsolute(p)) return null;
+  const n = path.normalize(p);
+  if (n.startsWith('\\\\') || n.startsWith('//')) return null;
+  try {
+    const real = fs.realpathSync(n);
+    if (real.startsWith('\\\\') || !fs.statSync(real).isFile() || !kindOf(real) || !kindOf(n)) return null;
+    return n;
+  } catch { return null; }
+}
+
+/** Médias déjà importés sur cette machine : un projet qui les réutilise s'ouvre sans question. */
+const knownFile = () => path.join(app.getPath('userData'), 'known-media.json');
+let known = new Set();
+function loadKnown() { try { known = new Set(JSON.parse(fs.readFileSync(knownFile(), 'utf8')).slice(-5000)); } catch { known = new Set(); } }
+function remember(paths) {
+  if (AUTOTEST) return;
+  let changed = false;
+  for (const p of paths) if (!known.has(p)) { known.add(p); changed = true; }
+  if (changed) try { fs.writeFileSync(knownFile(), JSON.stringify([...known].slice(-5000))); } catch { /* mémoire facultative */ }
+}
 
 // La lecture démarre sur un raccourci clavier ou une action de l'interface, pas toujours sur un clic.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'ezmedia', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: 'ezmedia', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+]);
+
+/** L'interface construite est servie par app://ezcut et confinée au dossier dist : pas d'accès à file://. */
+async function serveApp(request) {
+  let rel = decodeURIComponent(new URL(request.url).pathname);
+  if (rel === '/' || rel === '') rel = '/index.html';
+  const file = path.join(DIST, rel), back = path.relative(DIST, file);
+  if (back.startsWith('..') || path.isAbsolute(back)) return new Response('forbidden', { status: 403 });
+  try {
+    const res = await net.fetch(pathToFileURL(file).toString());
+    const headers = new Headers(res.headers);
+    headers.set('Content-Security-Policy', CSP);
+    return new Response(res.body, { status: res.status, headers });
+  } catch { return new Response('not found', { status: 404 }); }
+}
 
 function serveMedia(request) {
   const file = decodeURIComponent(new URL(request.url).pathname.slice(1));
@@ -37,36 +95,37 @@ function serveMedia(request) {
   const headers = { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
   const m = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
   if (m && (m[1] || m[2])) {
-    let start = m[1] ? parseInt(m[1], 10) : Math.max(0, stat.size - parseInt(m[2], 10));
-    let end = m[1] && m[2] ? Math.min(parseInt(m[2], 10), stat.size - 1) : stat.size - 1;
+    const start = m[1] ? parseInt(m[1], 10) : Math.max(0, stat.size - parseInt(m[2], 10));
+    const end = m[1] && m[2] ? Math.min(parseInt(m[2], 10), stat.size - 1) : stat.size - 1;
     if (start >= stat.size || start > end) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${stat.size}` } });
     return new Response(Readable.toWeb(fs.createReadStream(file, { start, end })), { status: 206, headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Content-Length': String(end - start + 1) } });
   }
   return new Response(Readable.toWeb(fs.createReadStream(file)), { status: 200, headers: { ...headers, 'Content-Length': String(stat.size) } });
 }
 
-function run(cmd, args) {
+function run(cmd, args, timeoutMs = 15000) {
   return new Promise(resolve => {
-    let out = '', err = '';
-    let child;
+    if (!cmd) return resolve({ code: -1, out: '', err: 'programme introuvable' });
+    let out = '', err = '', child;
     try { child = spawn(cmd, args, { windowsHide: true }); } catch (e) { return resolve({ code: -1, out, err: String(e) }); }
-    child.stdout.on('data', d => { out += d; });
-    child.stderr.on('data', d => { err += d; });
-    child.on('error', e => resolve({ code: -1, out, err: String(e) }));
-    child.on('close', code => resolve({ code, out, err }));
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* déjà terminé */ } }, timeoutMs);
+    child.stdout.on('data', d => { if (out.length < 1e6) out += d; });
+    child.stderr.on('data', d => { if (err.length < 1e5) err += d; });
+    child.on('error', e => { clearTimeout(timer); resolve({ code: -1, out, err: String(e) }); });
+    child.on('close', code => { clearTimeout(timer); resolve({ code, out, err }); });
   });
 }
 
 async function probe(file) {
   const kind = kindOf(file);
-  if (!kind || !fs.existsSync(file)) return null;
   allowed.add(file);
   const info = { path: file, url: mediaUrl(file), name: path.basename(file), kind, duration: 0, width: 0, height: 0, hasAudio: kind === 'audio' };
-  const r = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file]);
+  // -protocol_whitelist file : un fichier piégé ne peut pas faire ouvrir d'autres sources à FFmpeg.
+  const r = await run(FFPROBE, ['-v', 'error', '-protocol_whitelist', 'file', '-print_format', 'json', '-show_format', '-show_streams', file]);
   if (r.code === 0) {
     try {
       const j = JSON.parse(r.out), v = (j.streams || []).find(s => s.codec_type === 'video'), a = (j.streams || []).find(s => s.codec_type === 'audio');
-      info.duration = kind === 'image' ? 0 : parseFloat(j.format?.duration) || 0;
+      info.duration = kind === 'image' ? 0 : num(j.format?.duration, 0, 86400 * 4, 0);
       info.hasAudio = !!a && kind !== 'image';
       if (v) {
         const rot = Math.abs(parseInt(v.tags?.rotate ?? v.side_data_list?.find(s => s.rotation !== undefined)?.rotation ?? 0, 10)) % 180 === 90;
@@ -76,22 +135,51 @@ async function probe(file) {
   }
   return info;
 }
-const probeAll = async files => (await Promise.all(files.filter(f => typeof f === 'string').map(probe))).filter(Boolean);
+/** Valide, dédoublonne, plafonne, puis analyse quatre fichiers à la fois. */
+async function probeAll(files) {
+  const list = [...new Set((Array.isArray(files) ? files : []).map(localFile).filter(Boolean))].slice(0, MAX_MEDIA);
+  const out = new Array(list.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, list.length) }, async () => { while (next < list.length) { const i = next++; out[i] = await probe(list[i]); } }));
+  return out;
+}
+
+/* ---------- projet ---------- */
+let projectPath = null; // fixé uniquement par un dialogue : l'interface ne choisit jamais où écrire
+
+/** Réouverture d'un projet : les médias de son dossier ou déjà connus sont acceptés ; pour les autres, l'utilisateur décide. */
+async function relink(win, paths) {
+  const files = [...new Set((Array.isArray(paths) ? paths : []).slice(0, MAX_MEDIA).map(localFile).filter(Boolean))];
+  const base = projectPath ? path.dirname(projectPath) + path.sep : null;
+  const trusted = [], other = [];
+  for (const f of files) (allowed.has(f) || known.has(f) || (base && f.startsWith(base)) ? trusted : other).push(f);
+  if (other.length) {
+    const dirs = [...new Set(other.map(f => path.dirname(f)))];
+    const r = await dialog.showMessageBox(win, {
+      type: 'question', buttons: ['Autoriser', 'Refuser'], defaultId: 1, cancelId: 1, title: 'Médias du projet',
+      message: `Ce projet utilise ${other.length} fichier(s) situé(s) hors de son dossier.`,
+      detail: 'Autoriser EZcut à les lire ? N\'acceptez que si vous faites confiance à l\'origine de ce projet.\n\n' + dirs.slice(0, 8).join('\n') + (dirs.length > 8 ? `\n… et ${dirs.length - 8} autre(s) dossier(s)` : ''),
+    });
+    if (r.response === 0) { trusted.push(...other); remember(other); }
+  }
+  return probeAll(trusted);
+}
 
 /* ---------- export ---------- */
-let job = null;
+let job = null, starting = false, lastExport = null;
 
 function audioGraph(tracks, total) {
   // Chaque piste devient une suite de segments (son du fichier ou silence), puis les pistes sont mixées.
   const inputs = [], filters = [], mixed = [];
-  let n = 1; // l'entrée 0 est la vidéo brute
-  tracks.forEach((segs, ti) => {
+  let n = 1, count = 0; // l'entrée 0 est la vidéo brute
+  (Array.isArray(tracks) ? tracks.slice(0, 2) : []).forEach((segs, ti) => {
     const labels = [];
-    segs.forEach((s, si) => {
-      const lab = `t${ti}s${si}`, dur = Math.max(0.01, Number(s.dur) || 0);
-      if (s.path && allowed.has(s.path)) {
-        inputs.push('-ss', String(Math.max(0, Number(s.in) || 0)), '-t', String(dur), '-i', s.path);
-        filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${Math.max(0, Number(s.volume) || 0)}[${lab}]`);
+    (Array.isArray(segs) ? segs : []).forEach((s, si) => {
+      if (++count > MAX_SEGMENTS || !s) return;
+      const lab = `t${ti}s${si}`, dur = num(s.dur, 0.01, 86400, 0.01);
+      if (typeof s.path === 'string' && allowed.has(s.path)) {
+        inputs.push('-protocol_whitelist', 'file', '-ss', String(num(s.in, 0, 86400 * 4, 0)), '-t', String(dur), '-i', s.path);
+        filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${num(s.volume, 0, 4, 1)}[${lab}]`);
         n++;
       } else filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${dur}[${lab}]`);
       labels.push(`[${lab}]`);
@@ -105,31 +193,35 @@ function audioGraph(tracks, total) {
 }
 
 async function exportStart(win, req) {
-  if (job) return { ok: false, error: 'Un export est déjà en cours.' };
-  const width = req.width | 0, height = req.height | 0, fps = Number(req.fps) || 30, frames = req.frames | 0;
-  if (width < 16 || height < 16 || width > 8192 || height > 8192 || frames < 1) return { ok: false, error: 'Paramètres d\'export invalides.' };
-  let out = AUTOTEST && typeof req.outPath === 'string' ? req.outPath : null;
-  if (!out) {
-    const safe = String(req.name || 'EZcut').replace(/[\\/:*?"<>|]/g, '_');
-    const r = await dialog.showSaveDialog(win, { title: 'Exporter la vidéo', defaultPath: path.join(app.getPath('videos'), safe + '.mp4'), filters: [{ name: 'Vidéo MP4', extensions: ['mp4'] }] });
-    if (r.canceled || !r.filePath) return { ok: false };
-    out = r.filePath;
-  }
-  const total = frames / fps, { inputs, filters } = audioGraph(Array.isArray(req.audio) ? req.audio : [], total);
-  const args = ['-y', '-hide_banner', '-loglevel', 'error',
-    '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(fps), '-i', 'pipe:0', ...inputs,
-    '-filter_complex', [`[0:v]vflip,format=yuv420p[vout]`, ...filters].join(';'), '-map', '[vout]', '-map', '[aout]',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', String(total), out];
-  let child;
-  try { child = spawn(FFMPEG, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { return { ok: false, error: 'FFmpeg introuvable : ' + e.message }; }
-  const j = job = { child, out, err: '', failed: null, closed: null, size: width * height * 4 };
-  child.stderr.on('data', d => { j.err = (j.err + d).slice(-4000); });
-  child.stdin.on('error', e => { j.failed = j.failed || e.message; });
-  j.closed = new Promise(resolve => {
-    child.on('error', e => { j.failed = 'FFmpeg introuvable ou impossible à lancer : ' + e.message; resolve(-1); });
-    child.on('close', code => resolve(code));
-  });
-  return { ok: true, path: out };
+  if (job || starting) return { ok: false, error: 'Un export est déjà en cours.' };
+  if (!FFMPEG) return { ok: false, error: 'FFmpeg est introuvable. Installez-le et vérifiez qu\'il est dans le PATH.' };
+  const width = req.width | 0, height = req.height | 0, fps = Number(req.fps), frames = req.frames | 0;
+  if (width < 16 || height < 16 || width > 8192 || height > 8192 || width % 2 || height % 2 || !(fps >= 1 && fps <= 240) || frames < 1 || frames > 240 * 3600 * 12) return { ok: false, error: 'Paramètres d\'export invalides.' };
+  starting = true;
+  try {
+    let out = AUTOTEST && typeof req.outPath === 'string' ? req.outPath : null;
+    if (!out) {
+      const safe = String(req.name || 'EZcut').slice(0, 120).replace(/[\\/:*?"<>|]/g, '_');
+      const r = await dialog.showSaveDialog(win, { title: 'Exporter la vidéo', defaultPath: path.join(app.getPath('videos'), safe + '.mp4'), filters: [{ name: 'Vidéo MP4', extensions: ['mp4'] }] });
+      if (r.canceled || !r.filePath) return { ok: false };
+      out = r.filePath;
+    }
+    const total = frames / fps, { inputs, filters } = audioGraph(req.audio, total);
+    const args = ['-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(fps), '-i', 'pipe:0', ...inputs,
+      '-filter_complex', ['[0:v]vflip,format=yuv420p[vout]', ...filters].join(';'), '-map', '[vout]', '-map', '[aout]',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', String(total), out];
+    let child;
+    try { child = spawn(FFMPEG, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] }); } catch (e) { return { ok: false, error: 'FFmpeg n\'a pas pu démarrer : ' + e.message }; }
+    const j = job = { child, out, err: '', failed: null, closed: null, size: width * height * 4 };
+    child.stderr.on('data', d => { j.err = (j.err + d).slice(-4000); });
+    child.stdin.on('error', e => { j.failed = j.failed || e.message; });
+    j.closed = new Promise(resolve => {
+      child.on('error', e => { j.failed = 'FFmpeg n\'a pas pu démarrer : ' + e.message; resolve(-1); });
+      child.on('close', code => resolve(code));
+    });
+    return { ok: true, path: out };
+  } finally { starting = false; }
 }
 
 async function exportFrame(pixels) {
@@ -148,6 +240,7 @@ async function exportFinish() {
   const code = await j.closed;
   job = null;
   if (code !== 0 || j.failed) return { ok: false, error: (j.failed || 'FFmpeg a échoué.') + ' ' + j.err.trim() };
+  lastExport = j.out;
   return { ok: true, path: j.out };
 }
 
@@ -170,43 +263,65 @@ function createWindow() {
   // Aucune navigation ni fenêtre externe depuis l'interface.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
-  if (DEV_URL) win.loadURL(DEV_URL); else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  win.loadURL(DEV_URL || APP_ORIGIN + '/index.html');
   return win;
 }
 
 app.whenReady().then(() => {
+  FFMPEG = resolveTool('ffmpeg', process.env.EZCUT_FFMPEG);
+  FFPROBE = resolveTool('ffprobe', process.env.EZCUT_FFPROBE);
+  loadKnown();
+  protocol.handle('app', serveApp);
   protocol.handle('ezmedia', serveMedia);
-  const winOf = e => BrowserWindow.fromWebContents(e.sender);
+  // L'application n'a besoin d'aucune permission web (caméra, micro, position…).
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
 
-  ipcMain.handle('media:pick', async e => {
+  const winOf = e => BrowserWindow.fromWebContents(e.sender);
+  /** Enregistre une commande en n'acceptant que le cadre principal de notre propre page. */
+  const handle = (channel, fn) => ipcMain.handle(channel, (e, ...args) => {
+    const url = e.senderFrame?.url || '';
+    if (e.senderFrame !== e.sender.mainFrame || !(url.startsWith(APP_ORIGIN + '/') || (DEV_URL && url.startsWith(DEV_URL)))) throw new Error('émetteur refusé');
+    return fn(e, ...args);
+  });
+
+  handle('media:pick', async e => {
     const r = await dialog.showOpenDialog(winOf(e), { title: 'Importer des médias', properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Médias', extensions: [...EXT.video, ...EXT.audio, ...EXT.image].map(x => x.slice(1)) }] });
-    return r.canceled ? [] : probeAll(r.filePaths);
+    if (r.canceled) return [];
+    const out = await probeAll(r.filePaths); remember(out.map(f => f.path));
+    return out;
   });
-  ipcMain.handle('media:import', (_e, paths) => probeAll(Array.isArray(paths) ? paths : []));
-  ipcMain.handle('project:save', async (e, json, file) => {
-    if (typeof json !== 'string') return null;
-    if (typeof file !== 'string' || !file.toLowerCase().endsWith('.ezcut')) {
-      const r = await dialog.showSaveDialog(winOf(e), { title: 'Enregistrer le projet', defaultPath: path.join(app.getPath('documents'), 'Projet.ezcut'), filters: [{ name: 'Projet EZcut', extensions: ['ezcut'] }] });
+  // Fichiers déposés par l'utilisateur dans la fenêtre.
+  handle('media:import', async (_e, paths) => { const out = await probeAll(paths); remember(out.map(f => f.path)); return out; });
+  handle('media:relink', (e, paths) => relink(winOf(e), paths));
+  handle('project:new', () => { projectPath = null; allowed.clear(); });
+  handle('project:save', async (e, json, saveAs) => {
+    if (typeof json !== 'string' || json.length > MAX_PROJECT_BYTES) return null;
+    if (saveAs === true || !projectPath) {
+      const r = await dialog.showSaveDialog(winOf(e), { title: 'Enregistrer le projet', defaultPath: projectPath || path.join(app.getPath('documents'), 'Projet.ezcut'), filters: [{ name: 'Projet EZcut', extensions: ['ezcut'] }] });
       if (r.canceled || !r.filePath) return null;
-      file = r.filePath;
+      projectPath = r.filePath;
     }
     // Écriture atomique : un plantage en cours d'écriture ne détruit pas le projet existant.
-    fs.writeFileSync(file + '.tmp', json, 'utf8'); fs.renameSync(file + '.tmp', file);
-    return file;
+    fs.writeFileSync(projectPath + '.tmp', json, 'utf8'); fs.renameSync(projectPath + '.tmp', projectPath);
+    return projectPath;
   });
-  ipcMain.handle('project:open', async e => {
+  handle('project:open', async e => {
     const r = await dialog.showOpenDialog(winOf(e), { title: 'Ouvrir un projet', properties: ['openFile'], filters: [{ name: 'Projet EZcut', extensions: ['ezcut'] }] });
-    if (r.canceled || !r.filePaths[0]) return null;
-    return { path: r.filePaths[0], json: fs.readFileSync(r.filePaths[0], 'utf8') };
+    const file = r.canceled ? null : r.filePaths[0];
+    if (!file) return null;
+    if (fs.statSync(file).size > MAX_PROJECT_BYTES) return { path: file, json: '' };
+    projectPath = file; allowed.clear();
+    return { path: file, json: fs.readFileSync(file, 'utf8') };
   });
-  ipcMain.handle('export:start', (e, req) => exportStart(winOf(e), req || {}));
-  ipcMain.handle('export:frame', (_e, pixels) => exportFrame(pixels));
-  ipcMain.handle('export:finish', () => exportFinish());
-  ipcMain.handle('export:cancel', () => exportCancel());
-  ipcMain.handle('shell:show', (_e, p) => { if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p); });
-  ipcMain.handle('autotest:get', () => { if (!AUTOTEST) return null; try { return JSON.parse(fs.readFileSync(AUTOTEST, 'utf8')); } catch { return null; } });
-  ipcMain.handle('autotest:done', (_e, result) => { if (!AUTOTEST) return; fs.writeFileSync(AUTOTEST + '.result.json', JSON.stringify(result, null, 1)); app.exit(result && result.ok ? 0 : 1); });
+  handle('export:start', (e, req) => exportStart(winOf(e), req || {}));
+  handle('export:frame', (_e, pixels) => exportFrame(pixels));
+  handle('export:finish', () => exportFinish());
+  handle('export:cancel', () => exportCancel());
+  handle('shell:show', () => { if (lastExport && fs.existsSync(lastExport)) shell.showItemInFolder(lastExport); });
+  handle('autotest:get', () => { if (!AUTOTEST) return null; try { return JSON.parse(fs.readFileSync(AUTOTEST, 'utf8')); } catch { return null; } });
+  handle('autotest:done', (_e, result) => { if (!AUTOTEST) return; fs.writeFileSync(AUTOTEST + '.result.json', JSON.stringify(result, null, 1)); app.exit(result && result.ok ? 0 : 1); });
 
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

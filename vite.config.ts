@@ -12,8 +12,11 @@ function saveEndpoint(): Plugin {
     configureServer(server) {
       server.middlewares.use('/__save/curation.json', (req, res) => {
         if (req.method !== 'POST') { res.statusCode = 405; return res.end(); }
+        // Seule la page de test servie par ce serveur peut écrire, et dans une limite de taille.
+        if (!/^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(req.headers.origin ?? '')) { res.statusCode = 403; return res.end(); }
         const chunks: Buffer[] = [];
-        req.on('data', c => chunks.push(c));
+        let size = 0;
+        req.on('data', c => { size += c.length; if (size > 5e6) req.destroy(); else chunks.push(c); });
         req.on('end', () => {
           fs.writeFileSync(path.resolve(import.meta.dirname, 'tools/catalog/curation.json'), Buffer.concat(chunks));
           res.end('ok');
@@ -28,7 +31,7 @@ function csp(): Plugin {
   return {
     name: 'ezcut-csp',
     apply: 'build',
-    transformIndexHtml: html => html.replace('<!--csp-->', `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ezmedia:; media-src 'self' blob: ezmedia:; connect-src 'self' ezmedia:">`),
+    transformIndexHtml: html => html.replace('<!--csp-->', `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ezmedia:; media-src 'self' blob: ezmedia:; connect-src 'self' ezmedia:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">`),
   };
 }
 

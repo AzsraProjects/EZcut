@@ -87,8 +87,13 @@ export async function importFiles(files: File[]): Promise<Media[]> {
 export async function relinkMedia(): Promise<number> {
   const st = useStore.getState(), list = st.project.media;
   if (!ez || !list.length) return 0;
-  const found = new Map((await ez.importPaths(list.map(m => m.path))).map(f => [f.path, f]));
-  st.apply(p => { const n = structuredClone(p); n.media.forEach(m => { const f = found.get(m.path); if (f) m.url = f.url; }); return n; }, false);
+  const found = new Map((await ez.relinkMedia(list.map(m => m.path))).map(f => [f.path, f]));
+  // Ce que dit le fichier lui-même remplace ce qu'affirmait le projet (type, présence de son, dimensions).
+  st.apply(p => {
+    const n = structuredClone(p);
+    n.media.forEach(m => { const f = found.get(m.path); if (f) Object.assign(m, { url: f.url, kind: f.kind, hasAudio: f.hasAudio, duration: f.duration || m.duration, width: f.width || m.width, height: f.height || m.height }); });
+    return n;
+  }, false);
   useStore.getState().project.media.forEach(m => { if (found.has(m.path)) void analyse(m); });
   return list.filter(m => !found.has(m.path)).length;
 }
