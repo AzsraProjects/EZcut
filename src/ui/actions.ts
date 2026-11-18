@@ -1,7 +1,7 @@
 /** Actions de l'interface : relient les gestes de l'utilisateur aux opérations de core. */
 import { addFx, addOverlay, addText, appendClip, clipAt, findClip, removeClip, setTransition, splitAt, trackStarts } from '../core/ops';
 import { parseProject } from '../core/project';
-import { emptyProject, type Project, type TextStyle, type Transform } from '../core/types';
+import { emptyProject, type Project, type TextStyle, type TrackId, type Transform } from '../core/types';
 import { ez } from '../desktop/api';
 import { catalog, defaultsOf, transitionDefaults, type CatItem } from '../effects/catalog';
 import { player } from '../engine/player';
@@ -37,11 +37,13 @@ export function addTitle(style: TextStyle, transform?: Partial<Transform>) {
   if (f) player.seek(f.start + Math.min(f.clip.dur / 2, 1));
 }
 
-export function selectClip(id: string) {
+/** Sélectionne un clip. Avec at (clic dans la timeline), la tête de lecture se place à cet instant ; sinon elle rejoint le clip si elle en était sortie. */
+export function selectClip(id: string, at?: number) {
   const st = S(), f = findClip(st.project, id);
   if (!f) return;
   st.select({ kind: 'clip', id });
-  if (player.t < f.start || player.t >= f.start + f.clip.dur) player.seek(f.start + 0.001);
+  if (at !== undefined) { player.pause(); player.seek(at); }
+  else if (player.t < f.start || player.t >= f.start + f.clip.dur) player.seek(f.start + 0.001);
 }
 
 export function applyItem(item: CatItem, clipId?: string) {
@@ -50,8 +52,10 @@ export function applyItem(item: CatItem, clipId?: string) {
     const target = clipId ?? targetFxClip();
     if (!target) { st.notify('Ajoutez d\'abord une vidéo à la timeline.'); return; }
     if (findClip(p, target)?.clip.text) { st.notify('Les effets s\'appliquent aux vidéos et aux images, pas aux titres.'); return; }
+    const f = findClip(p, target), name = f ? p.media.find(m => m.id === f.clip.mediaId)?.name ?? 'le clip' : 'le clip';
     st.apply(pr => addFx(pr, target, item.id, defaultsOf(item)));
     st.select({ kind: 'clip', id: target });
+    st.notify(`${item.kind === 'filter' ? 'Filtre' : 'Effet'} « ${item.label} » ajouté à « ${name} ».`, true);
     return;
   }
   if (p.video.length < 2) { st.notify('Une transition se pose entre deux clips de la piste principale : ajoutez-en au moins deux.'); return; }
@@ -60,7 +64,9 @@ export function applyItem(item: CatItem, clipId?: string) {
   if (i < 0) i = clipAt(p.video, player.t)?.index ?? 0;
   if (i >= p.video.length - 1) i = p.video.length - 2;
   const a = p.video[i], b = p.video[i + 1];
+  const replaced = !!a.transition;
   st.apply(pr => setTransition(pr, a.id, { effectId: item.id, params: transitionDefaults(item), dur: Math.min(1, a.dur, b.dur) }));
+  st.notify(`Transition « ${item.label} » ${replaced ? 'remplace la précédente' : 'posée sur la coupe'}.`, true);
   st.select({ kind: 'transition', id: a.id });
   const cut = trackStarts(p.video)[i] + a.dur;
   player.seek(Math.max(0, cut - 1.5)); player.play();
@@ -68,10 +74,12 @@ export function applyItem(item: CatItem, clipId?: string) {
 
 export function splitAtPlayhead() {
   const st = S(), sel = st.sel;
-  const track = sel?.kind === 'clip' ? findClip(st.project, sel.id)?.track ?? 'video' : 'video';
+  // La piste du clip sélectionné d'abord ; si rien n'y passe sous la tête de lecture, les autres pistes, vidéo en premier.
+  const first = sel?.kind === 'clip' ? findClip(st.project, sel.id)?.track : undefined;
+  const order = [...new Set([first, 'video', 'overlay', 'text', 'audio'].filter((t): t is TrackId => !!t))];
   const before = st.project;
-  st.apply(p => splitAt(p, track, player.t));
-  if (S().project === before) st.notify('Placez la tête de lecture à l\'intérieur du clip à scinder.');
+  for (const track of order) { st.apply(p => splitAt(p, track, player.t)); if (S().project !== before) return; }
+  st.notify('Placez la tête de lecture à l\'intérieur d\'un clip pour le couper en deux.');
 }
 
 export function deleteSelection() {
@@ -102,6 +110,7 @@ export async function loadProject(json: string, path: string | null, dirty = fal
   const st = S(), p = parseProject(json);
   if (!p) { st.notify('Ce fichier n\'est pas un projet EZcut lisible.'); return false; }
   // Les effets inconnus de cette version sont conservés mais ignorés au rendu.
+  if (path) await ez?.projectOpened();
   player.pause(); player.seek(0);
   st.load(p, path);
   const missing = await relinkMedia();
@@ -110,13 +119,23 @@ export async function loadProject(json: string, path: string | null, dirty = fal
   return true;
 }
 
+/** Vrai si le projet en cours peut être remplacé : il est enregistré, ou l'utilisateur vient de trancher. */
+export async function canReplaceProject(): Promise<boolean> {
+  if (!S().dirty) return true;
+  if (!ez) return window.confirm('Abandonner les modifications du projet en cours ?');
+  const r = await ez.confirmDiscard();
+  return r === 'discard' || (r === 'save' && await saveProject());
+}
+
 export async function openProject() {
   if (!ez) { S().notify('L\'ouverture n\'est disponible que dans l\'application de bureau.'); return; }
+  if (!await canReplaceProject()) return;
   const r = await ez.openProject();
   if (r) await loadProject(r.json, r.path);
 }
 
-export function newProject() {
+export async function newProject() {
+  if (!await canReplaceProject()) return;
   void ez?.newProject();
   player.pause(); player.seek(0);
   S().load(emptyProject(), null);

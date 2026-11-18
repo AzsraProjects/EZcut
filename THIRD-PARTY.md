@@ -20,4 +20,6 @@ Electron, React, Zustand, Vite, TypeScript et Vitest (licence MIT) sont install�
 
 ## FFmpeg
 
-EZcut appelle FFmpeg comme programme séparé. Il n'est pas distribué avec ce dépôt ; il devra l'être avec l'installateur, accompagné de ses propres mentions de licence ([ADR-0002](docs/adr/0002-licence.md)).
+EZcut appelle FFmpeg comme programme séparé. Les binaires viennent des paquets `ffmpeg-static` et `ffprobe-static` (version « essentials » de gyan.dev, sous GPL) : ils ne sont pas copiés dans ce dépôt, mais l'installateur les contient, avec leur licence dans `resources/licenses` ([ADR-0002](docs/adr/0002-licence.md)).
+
+La mise à jour utilise `electron-updater` (licence MIT).

@@ -24,6 +24,8 @@ interface State {
   catalogReady: boolean;
   pps: number;
   toast: string | null;
+  /** Le message en cours propose d'annuler l'action qu'il annonce. */
+  toastUndo: boolean;
   light: boolean;
   playing: boolean;
   exportOpen: boolean;
@@ -43,7 +45,7 @@ interface State {
   setTab(tab: Tab): void;
   load(project: Project, path: string | null): void;
   saved(path: string): void;
-  notify(msg: string): void;
+  notify(msg: string, undoable?: boolean): void;
   set(patch: Partial<Pick<State, 'pps' | 'catalogReady' | 'light' | 'toast' | 'playing' | 'exportOpen' | 'thumbEpoch'>>): void;
 }
 
@@ -58,7 +60,7 @@ export const useStore = create<State>((set, get) => ({
     try { localStorage.setItem('ezcut.layout', JSON.stringify(layout)); } catch { /* stockage indisponible : la disposition vaut pour cette session */ }
   },
   project: emptyProject(), past: [], future: [], sel: null, tab: 'media', filePath: null, dirty: false,
-  catalogReady: false, pps: 60, toast: null, light: false, playing: false, exportOpen: false, thumbEpoch: 0, thumbs: {},
+  catalogReady: false, pps: 60, toast: null, toastUndo: false, light: false, playing: false, exportOpen: false, thumbEpoch: 0, thumbs: {},
   setThumb(mediaId, t) { set(s => ({ thumbs: { ...s.thumbs, [mediaId]: { ...s.thumbs[mediaId], ...t } } })); },
   apply(fn, record = true) {
     const { project, past } = get(), next = fn(project);
@@ -81,6 +83,6 @@ export const useStore = create<State>((set, get) => ({
   setTab(tab) { set({ tab }); },
   load(project, path) { set({ project, past: [], future: [], sel: null, filePath: path, dirty: false }); },
   saved(path) { set({ filePath: path, dirty: false }); },
-  notify(msg) { clearTimeout(toastTimer); set({ toast: msg }); toastTimer = setTimeout(() => set({ toast: null }), 3500); },
+  notify(msg, undoable = false) { clearTimeout(toastTimer); set({ toast: msg, toastUndo: undoable }); toastTimer = setTimeout(() => set({ toast: null }), undoable ? 5000 : 3500); },
   set(patch) { set(patch); },
 }));

@@ -1,34 +1,41 @@
 # Journal des modifications
 
-Toutes les modifications notables d'EZcut sont consignées ici. Format décrit dans [docs/08-versions-mises-a-jour.md](docs/08-versions-mises-a-jour.md) ; les numéros de version suivent le versionnage sémantique.
+Toutes les modifications notables d'EZcut sont consignées ici. Format décrit dans [docs/08-versions-mises-a-jour.md](docs/08-versions-mises-a-jour.md) ; les numéros de version suivent le versionnage sémantique. Ce fichier est affiché dans l'application (« Quoi de neuf »).
 
-## Non publié — 0.1.0
+## 0.1.0 — non publiée
 
-Premier éditeur fonctionnel.
+Première version d'EZcut : un éditeur complet pour monter, habiller et exporter une vidéo.
 
 ### Nouveautés
 
 - Importer des vidéos, des sons et des images, par bouton ou glisser-déposer.
-- Monter sur une piste vidéo et une piste audio : ajouter, scinder, rogner, réordonner, supprimer.
+- Monter sur quatre pistes : titres, incrustation, piste principale et audio. Scinder, rogner, déplacer, réordonner, supprimer.
 - Annuler et rétablir chaque action.
-- Banque de 130 effets, 25 filtres et 297 transitions, avec aperçu au survol sur sa propre vidéo.
-- Huit effets de mouvement écrits pour EZcut : trois tremblements (caméra à l'épaule, fort, secousse d'impact), quatre zooms (avant, arrière, pulsé en rythme, d'entrée) et un balancement.
-- Disposition libre : chaque panneau se redimensionne à la souris, se masque d'un clic, et la bibliothèque et l'inspecteur peuvent échanger de côté. La disposition est mémorisée.
+- Titres : 14 modèles (titres, synthés, sous-titres, animés) avec police, couleur, contour, ombre, cartouche et animations d'entrée et de sortie.
+- Incrustation : poser une vidéo ou une image par-dessus la piste principale, avec opacité et mode de fusion.
+- Dans l'aperçu, déplacer le clip sélectionné à la souris et le redimensionner à la molette.
+- Banque de 71 effets, 21 filtres et 285 transitions, triée, avec aperçu au survol sur sa propre vidéo.
+- 32 effets et filtres écrits pour EZcut : tremblements, zooms, flous, lueur, VHS, glitch, bandes cinéma, fondu au noir, et douze looks de couleur (noir et blanc, sépia, teal & orange, vintage, mat cinéma…).
 - Effets et filtres séparés : un effet anime ou déforme l'image, un filtre en change les couleurs.
-- Régler l'échelle, la position, la rotation, la couleur et le volume de chaque clip.
+- Régler l'échelle, la position, la rotation, la couleur, le volume et les fondus du son de chaque clip.
 - Choisir le format du projet : 16:9, 9:16, 1:1 ou 4:5.
-- Enregistrer et rouvrir un projet.
-- Exporter en MP4, de 720p à 4K.
+- Disposition libre : chaque panneau se redimensionne, se masque, et la bibliothèque et l'inspecteur peuvent échanger de côté.
+- Enregistrer et rouvrir un projet ; sauvegarde automatique toutes les 20 secondes, proposée à la restauration après une fermeture inattendue.
+- Exporter en MP4, H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe (NVIDIA, Intel, AMD).
+- Installateur Windows : FFmpeg est inclus, rien d'autre à installer.
+- Vérification des mises à jour et notes de version dans l'application.
 
 ### Problèmes connus
 
-- Les panneaux se redimensionnent, se masquent et s'échangent, mais ne se détachent pas encore en fenêtres séparées et ne se réarrangent pas librement.
-- La banque est en grande partie la collection open source brute : certains effets sont des démonstrations techniques plus que des outils de montage, et quelques-uns ne montrent rien sur une image fixe (effets de traînée, qui ont besoin de mouvement). Le tri reste à faire.
 - Une transition fige la dernière image du premier clip et la première du second pendant qu'elle se joue, au lieu de faire se chevaucher les deux clips.
-- L'export n'utilise pas encore la carte graphique pour l'encodage ; il tourne à peu près à la vitesse de lecture en 720p, plus lentement au-delà.
-- L'export positionne chaque image par recherche dans la vidéo source ; sur des fichiers à cadence variable (téléphone), une image peut être décalée d'une position.
+- Un effet posé sur une incrustation en change les couleurs mais pas la forme : un tremblement ou un zoom n'y déplace pas le cadre.
+- Une seule piste de titres et une seule piste d'incrustation : deux titres ne peuvent pas être affichés en même temps.
+- Pas d'images clés : un réglage vaut pour toute la durée du clip.
+- Pas de réglage de vitesse ni d'inversion.
+- Les réglages des effets et transitions d'origine communautaire portent leur nom anglais.
+- L'export avance à peu près à la vitesse de lecture ; l'image est positionnée par recherche dans la vidéo source, et peut être décalée d'une position sur un fichier à cadence variable (téléphone).
 - Le volume d'un clip ne peut pas dépasser 100 %.
-- FFmpeg doit être installé séparément.
-- Pas d'installateur ni de mise à jour automatique : l'application se lance depuis le code source.
-- Pas de sauvegarde automatique ni d'avertissement à la fermeture avec des modifications non enregistrées.
+- L'installateur n'est pas signé : Windows affiche un avertissement à l'installation.
+- La mise à jour automatique n'a pas encore pu être essayée, faute de version publiée.
+- Les panneaux ne se détachent pas en fenêtres séparées.
 - L'interface n'existe qu'en français.

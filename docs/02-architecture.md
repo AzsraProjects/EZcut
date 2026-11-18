@@ -55,11 +55,13 @@ graph TD
 
 ### État réel en 0.1
 
-Le code tient pour l'instant dans un seul paquet : les modules ci-dessus sont des dossiers de `src/` (`core`, `engine`, `effects`, `export`, `ui`, `desktop`) et `electron/` joue le rôle de `apps/desktop`. Le sens des dépendances est respecté ; le découpage en paquets séparés se fera quand un second consommateur le justifiera. `media`, `ai` et `updater` n'existent pas encore.
+Le code tient pour l'instant dans un seul paquet : les modules ci-dessus sont des dossiers de `src/` (`core`, `engine`, `effects`, `export`, `ui`, `desktop`) et `electron/` joue le rôle de `apps/desktop`. Le sens des dépendances est respecté ; le découpage en paquets séparés se fera quand un second consommateur le justifiera. L'import et les vignettes sont dans `ui/media.ts`, la mise à jour dans `electron/main.cjs` ; `ai` n'existe pas encore.
+
+Composition : la piste principale (magnétique, avec transitions) est rendue d'abord, puis chaque incrustation et chaque titre est posé par-dessus avec son opacité et son mode de fusion, en alpha prémultiplié. Les titres sont dessinés sur un canvas 2D à la résolution du rendu, puis traités comme une image.
 
 Écarts connus avec la cible : le temps est encore stocké en secondes flottantes et non en entiers ; l'aperçu décode avec les éléments vidéo du navigateur et non WebCodecs ; les transitions figent une image au lieu de faire se chevaucher les clips.
 
-Premières mesures sur les risques : R1 (débit d'export) — environ 30 à 40 images par seconde en 720p avec encodage logiciel, à mesurer en 1080p et 4K ; R4 (aperçu au survol) — fonctionne sur 419 shaders avec un seul contexte graphique, délai non encore mesuré.
+Premières mesures sur les risques, sur la machine de développement (GPU NVIDIA) : R1 (débit d'export) — environ 35 à 45 images par seconde en 720p et 25 en 1080p ; le rendu et le transfert des images limitent le débit, pas l'encodeur. R4 (aperçu au survol) — fonctionne sur toute la banque avec un seul contexte graphique, délai non mesuré. R2, R3 et R5 ne sont pas mesurés.
 
 ## Modèle de projet
 

@@ -71,6 +71,10 @@ function remember(paths) {
   if (changed) try { fs.writeFileSync(knownFile(), JSON.stringify([...known].slice(-5000))); } catch { /* mémoire facultative */ }
 }
 
+// Une seule instance : deux fenêtres écraseraient mutuellement leur sauvegarde automatique.
+if (!AUTOTEST && !app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => { const w = BrowserWindow.getAllWindows()[0]; if (w) { if (w.isMinimized()) w.restore(); w.focus(); } });
+
 // La lecture démarre sur un raccourci clavier ou une action de l'interface, pas toujours sur un clic.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
@@ -152,6 +156,7 @@ async function probeAll(files) {
 
 /* ---------- projet ---------- */
 let projectPath = null; // fixé uniquement par un dialogue : l'interface ne choisit jamais où écrire
+let pendingOpen = null; // fichier choisi dans « Ouvrir », en attente de validation par l'interface
 
 /** Réouverture d'un projet : les médias de son dossier ou déjà connus sont acceptés ; pour les autres, l'utilisateur décide. */
 async function relink(win, paths) {
@@ -208,7 +213,7 @@ function audioGraph(tracks, total) {
       const lab = `t${ti}s${si}`, dur = num(s.dur, 0.01, 86400, 0.01);
       if (typeof s.path === 'string' && allowed.has(s.path)) {
         inputs.push('-protocol_whitelist', 'file', '-ss', String(num(s.in, 0, 86400 * 4, 0)), '-t', String(dur), '-i', s.path);
-        const fi = num(s.fadeIn, 0, dur, 0), fo = num(s.fadeOut, 0, dur, 0);
+        const fi = num(s.fadeIn, 0, dur, 0), fo = num(s.fadeOut, 0, dur - fi, 0);
         const fades = (fi > 0 ? `,afade=t=in:st=0:d=${fi}` : '') + (fo > 0 ? `,afade=t=out:st=${Math.max(0, dur - fo)}:d=${fo}` : '');
         filters.push(`[${n}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${dur},volume=${num(s.volume, 0, 4, 1)}${fades}[${lab}]`);
         n++;
@@ -313,7 +318,9 @@ function createWindow() {
   win.webContents.on('will-navigate', e => e.preventDefault());
   // Fermeture avec des modifications non enregistrées : l'utilisateur choisit.
   win.on('close', e => {
-    if (!dirty || closing || AUTOTEST) return;
+    if (closing || AUTOTEST) return;
+    if (job && dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Continuer l\'export', 'Annuler l\'export et quitter'], defaultId: 0, cancelId: 0, title: 'EZcut', message: 'Un export est en cours.', detail: 'Quitter maintenant l\'interrompt : la vidéo ne sera pas créée.' }) === 0) { e.preventDefault(); return; }
+    if (!dirty) return;
     e.preventDefault();
     const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Enregistrer', 'Ne pas enregistrer', 'Annuler'], defaultId: 0, cancelId: 2, title: 'EZcut', message: 'Enregistrer les modifications du projet ?', detail: 'Les modifications non enregistrées seront perdues.' });
     if (r === 0) win.webContents.send('app:save-and-close');
@@ -353,6 +360,8 @@ app.whenReady().then(() => {
   handle('media:import', async (_e, paths) => { const out = await probeAll(paths); remember(out.map(f => f.path)); return out; });
   handle('media:relink', (e, paths) => relink(winOf(e), paths));
   handle('project:new', () => { projectPath = null; allowed.clear(); });
+  // Avant de remplacer un projet modifié (nouveau, ouvrir, restaurer) : enregistrer, abandonner ou renoncer.
+  handle('project:confirm-discard', e => ['save', 'discard', 'cancel'][dialog.showMessageBoxSync(winOf(e), { type: 'question', buttons: ['Enregistrer', 'Ne pas enregistrer', 'Annuler'], defaultId: 0, cancelId: 2, title: 'EZcut', message: 'Enregistrer les modifications du projet en cours ?', detail: 'Sans enregistrement, elles seront perdues.' })]);
   handle('project:save', async (e, json, saveAs) => {
     if (typeof json !== 'string' || json.length > MAX_PROJECT_BYTES) return null;
     if (saveAs === true || !projectPath) {
@@ -369,9 +378,11 @@ app.whenReady().then(() => {
     const file = r.canceled ? null : r.filePaths[0];
     if (!file) return null;
     if (fs.statSync(file).size > MAX_PROJECT_BYTES) return { path: file, json: '' };
-    projectPath = file; allowed.clear();
+    pendingOpen = file;
     return { path: file, json: fs.readFileSync(file, 'utf8') };
   });
+  // Le fichier était bien un projet : il devient le projet courant. Sinon, le projet en cours et ses médias restent intacts.
+  handle('project:opened', () => { if (!pendingOpen) return; projectPath = pendingOpen; pendingOpen = null; allowed.clear(); });
   handle('export:encoders', async () => { await encodersReady; return { h264: hw.h264, hevc: hw.hevc }; });
   handle('project:dirty', (_e, v) => { dirty = v === true; });
   handle('app:close', e => { closing = true; try { fs.unlinkSync(autosaveFile()); } catch { /* rien à supprimer */ } winOf(e)?.close(); });
@@ -400,4 +411,5 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('window-all-closed', () => { if (job) exportCancel(); if (process.platform !== 'darwin') app.quit(); });
+// L'export interrompu est nettoyé (fichier partiel supprimé) avant de quitter.
+app.on('window-all-closed', () => { Promise.resolve(job && exportCancel()).catch(() => {}).finally(() => { if (process.platform !== 'darwin') app.quit(); }); });

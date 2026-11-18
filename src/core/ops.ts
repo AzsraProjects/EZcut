@@ -173,9 +173,15 @@ export function trimClip(p: Project, id: string, edge: 'start' | 'end', delta: n
     if (free) { const next = list[f.index + 1]; if (next) hi = Math.min(hi, next.start - c.start); }
     c.dur = Math.max(MIN_CLIP, Math.min(hi, c.dur + delta));
   }
-  c.fadeIn = Math.min(c.fadeIn, c.dur); c.fadeOut = Math.min(c.fadeOut, c.dur);
+  clampFades(c);
   clampTransitions(list);
   return n;
+}
+
+/** Les deux fondus tiennent ensemble dans la durée du clip. */
+export function clampFades(c: Clip) {
+  c.fadeIn = Math.max(0, Math.min(c.fadeIn, c.dur));
+  c.fadeOut = Math.max(0, Math.min(c.fadeOut, c.dur - c.fadeIn));
 }
 
 function clampTransitions(list: Clip[]) {
@@ -193,6 +199,7 @@ export function patchClip(p: Project, id: string, fn: (c: Clip) => void): Projec
   if (!f) return p;
   const n = clone(p);
   fn(n[f.track][f.index]);
+  clampFades(n[f.track][f.index]);
   clampTransitions(n[f.track]);
   return n;
 }
@@ -208,6 +215,15 @@ export function setTransition(p: Project, clipId: string, tr: TransitionInstance
   const f = findClip(p, clipId);
   if (!f || f.track !== 'video' || (tr && f.index >= p.video.length - 1)) return p;
   return patchClip(p, clipId, c => { c.transition = tr ? clone(tr) : null; });
+}
+
+/** Étend un clip de piste libre à toute la durée de la piste principale. Sans effet si un autre clip de sa piste est sur le chemin. */
+export function spanWhole(p: Project, id: string): Project {
+  const f = findClip(p, id), total = trackDuration(p.video);
+  if (!f || !isFree(f.track) || total < MIN_CLIP || p[f.track].length > 1) return p;
+  const media = p.media.find(m => m.id === f.clip.mediaId);
+  if (media && media.kind === 'video') return p; // une vidéo a sa propre durée
+  return patchClip(p, id, c => { c.start = 0; c.dur = total; });
 }
 
 /** Gain d'un fondu audio à l'instant local du clip, de 0 à 1. */

@@ -61,7 +61,24 @@ export function Updates() {
     {n && (
       <div className="modal" role="dialog" aria-modal="true" aria-label="Quoi de neuf" onPointerDown={e => { if (e.target === e.currentTarget) setNews(false); }}>
         <div className="dialog wide">
-          <header><b>Quoi de neuf — EZcut {version}</b><button className="ib small" aria-label="Fermer" onClick={() => setNews(false)}><Icon name="x" /></button></header>
+          <header><b>Aide — EZcut {version}</b><button className="ib small" aria-label="Fermer" onClick={() => setNews(false)}><Icon name="x" /></button></header>
+          <div className="notes">
+            <h4>Raccourcis clavier</h4>
+            <dl className="keys">
+              <dt><kbd>Espace</kbd></dt><dd>Lecture, pause</dd>
+              <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Image précédente, suivante (avec <kbd>Maj</kbd> : dix images)</dd>
+              <dt><kbd>Début</kbd> <kbd>Fin</kbd></dt><dd>Début, fin du montage</dd>
+              <dt><kbd>S</kbd></dt><dd>Couper le clip en deux à la tête de lecture</dd>
+              <dt><kbd>Suppr</kbd></dt><dd>Supprimer la sélection</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></dt><dd>Annuler, rétablir</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Enregistrer (avec <kbd>Maj</kbd> : enregistrer sous)</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>O</kbd></dt><dd>Ouvrir un projet</dd>
+              <dt><kbd>Maj</kbd> + clic sur un média</dt><dd>Le poser par-dessus la vidéo</dd>
+              <dt><kbd>Alt</kbd> + survol d'un effet</dt><dd>L'essayer en grand dans l'aperçu</dd>
+              <dt>Glisser, molette dans l'aperçu</dt><dd>Déplacer, redimensionner le clip sélectionné</dd>
+            </dl>
+            <h4>Nouveautés de cette version</h4>
+          </div>
           <Notes lines={n.lines} />
           <footer><button className="btn primary" onClick={() => setNews(false)}>Fermer</button></footer>
         </div>

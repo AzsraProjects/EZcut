@@ -62,7 +62,7 @@ export function registerMedia(files: ImportedFile[]): Media[] {
 }
 
 export async function importWithDialog(): Promise<Media[]> {
-  if (ez) return registerMedia(await ez.pickMedia());
+  if (ez) { const got = await ez.pickMedia(), added = registerMedia(got); report(got.length, got.length, added.length); return added; }
   // Dans un navigateur (développement) : sélecteur de fichiers standard, lecture par URL locale.
   return new Promise(resolve => {
     const input = document.createElement('input');
@@ -72,10 +72,20 @@ export async function importWithDialog(): Promise<Media[]> {
   });
 }
 
+/** Dit à l'utilisateur ce que l'import a laissé de côté, plutôt que de ne rien faire en silence. */
+function report(asked: number, accepted: number, added: number) {
+  const refused = asked - accepted, known = accepted - added, parts: string[] = [];
+  if (refused > 0) parts.push(`${refused} fichier${refused > 1 ? 's' : ''} ignoré${refused > 1 ? 's' : ''} : format non pris en charge`);
+  if (known > 0) parts.push(`${known} déjà dans la bibliothèque`);
+  if (parts.length) useStore.getState().notify(parts.join(' ; ') + '.');
+}
+
 export async function importFiles(files: File[]): Promise<Media[]> {
   if (ez) {
     const paths = files.map(f => ez!.pathForFile(f)).filter(Boolean);
-    return registerMedia(await ez.importPaths(paths));
+    const got = await ez.importPaths(paths), added = registerMedia(got);
+    report(files.length, got.length, added.length);
+    return added;
   }
   return registerMedia(files.flatMap(f => {
     const kind = f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type.startsWith('image/') ? 'image' : null;

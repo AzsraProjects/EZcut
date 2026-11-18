@@ -1,6 +1,6 @@
-import { findClip, patchClip, removeFx, setTransition } from '../core/ops';
+import { findClip, patchClip, removeFx, setTransition, spanWhole, trimClip } from '../core/ops';
 import { BLEND_MODES, TEXT_ANIMS, type BlendMode, type Clip, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TrackId } from '../core/types';
-import { catalog, type CatEffect, type CatTransition } from '../effects/catalog';
+import { catalog, humanize, type CatEffect, type CatTransition } from '../effects/catalog';
 import type { IsfInput } from '../engine/gl';
 import { FONTS } from '../engine/text';
 import { Icon } from './Icon';
@@ -8,9 +8,9 @@ import { useStore } from './store';
 import { timecode } from './time';
 
 const st = () => useStore.getState();
-const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', screen: 'Écran (éclaircit)', multiply: 'Produit (assombrit)', add: 'Addition', overlay: 'Incrustation (contraste)' };
+const BLEND_LABELS: Record<BlendMode, string> = { normal: 'Normal', screen: 'Écran (éclaircit)', multiply: 'Produit (assombrit)', add: 'Addition', overlay: 'Contraste renforcé' };
 const ANIM_LABELS: Record<TextAnim, string> = { none: 'Aucune', fade: 'Fondu', slide: 'Glissement', pop: 'Rebond', type: 'Machine à écrire' };
-const TRACK_LABELS: Record<TrackId, string> = { video: 'piste V1', overlay: 'incrustation V2', text: 'piste T1', audio: 'piste A1' };
+const TRACK_LABELS: Record<TrackId, string> = { video: 'piste Vidéo', overlay: 'piste Par-dessus', text: 'piste Titres', audio: 'piste Son' };
 
 /** Curseur : un point d'annulation au début du geste, puis des mises à jour sans historique. */
 function Slider({ label, value, min, max, step, digits = 2, unit = '', onChange }: { label: string; value: number; min: number; max: number; step?: number; digits?: number; unit?: string; onChange: (v: number) => void }) {
@@ -95,9 +95,9 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
     {isText && <TextSection clip={clip} edit={edit} />}
     {!isAudio && <div className="sec">
       <h3>{isText ? 'Position' : 'Transformation'}<button className="btn sm" onClick={() => st().apply(p => patchClip(p, clip.id, c => { c.transform = { scale: 1, x: 0, y: 0, rot: 0 }; }))}>Réinitialiser</button></h3>
-      <Slider label="Échelle" min={0.1} max={4} step={0.01} value={tf.scale} onChange={v => edit(c => { c.transform.scale = v; })} />
-      <Slider label="Position X" min={-1} max={1} step={0.005} value={tf.x} onChange={v => edit(c => { c.transform.x = v; })} />
-      <Slider label="Position Y" min={-1} max={1} step={0.005} value={tf.y} onChange={v => edit(c => { c.transform.y = v; })} />
+      <Slider label="Échelle" min={10} max={400} step={1} digits={0} unit=" %" value={Math.round(tf.scale * 100)} onChange={v => edit(c => { c.transform.scale = v / 100; })} />
+      <Slider label="Horizontal" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.x * 100} onChange={v => edit(c => { c.transform.x = v / 100; })} />
+      <Slider label="Vertical" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.y * 100} onChange={v => edit(c => { c.transform.y = v / 100; })} />
       <Slider label="Rotation" min={-180} max={180} step={1} digits={0} unit="°" value={tf.rot} onChange={v => edit(c => { c.transform.rot = v; })} />
     </div>}
     {layered && <div className="sec">
@@ -109,13 +109,14 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
       <h3>Couleur<button className="btn sm" onClick={() => st().apply(p => patchClip(p, clip.id, c => { c.color = {}; }))}>Réinitialiser</button></h3>
       <IsfParams inputs={col.inputs} values={colorVals} onChange={(n, v) => edit(c => { c.color[n] = v; })} />
     </div>}
-    {media?.kind === 'image' && track === 'video' && <div className="sec"><h3>Durée</h3>
-      <Slider label="Durée" min={0.5} max={30} step={0.1} digits={1} unit=" s" value={clip.dur} onChange={v => edit(c => { c.dur = v; })} />
+    {(isText || media?.kind === 'image') && <div className="sec">
+      <h3>Durée{layered && <button className="btn sm" title="Afficher du début à la fin de la vidéo" onClick={() => { const before = st().project; st().apply(p => spanWhole(p, clip.id)); if (st().project === before) st().notify('Impossible : la piste principale est vide, ou un autre clip occupe déjà cette piste.'); }}>Toute la vidéo</button>}</h3>
+      <Slider label="Durée" min={0.5} max={Math.max(30, Math.ceil(clip.dur))} step={0.1} digits={1} unit=" s" value={clip.dur} onChange={v => st().apply(p => trimClip(p, clip.id, 'end', v - (findClip(p, clip.id)?.clip.dur ?? v)), false)} />
     </div>}
     {hasSound && <div className="sec"><h3>Son</h3>
       <Slider label="Volume" min={0} max={100} step={1} digits={0} unit=" %" value={Math.round(clip.volume * 100)} onChange={v => edit(c => { c.volume = v / 100; })} />
-      <Slider label="Fondu d'entrée" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={Math.min(clip.fadeIn, clip.dur)} onChange={v => edit(c => { c.fadeIn = v; })} />
-      <Slider label="Fondu de sortie" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={Math.min(clip.fadeOut, clip.dur)} onChange={v => edit(c => { c.fadeOut = v; })} />
+      <Slider label="Fondu d'entrée" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.fadeIn} onChange={v => edit(c => { c.fadeIn = Math.min(v, c.dur); c.fadeOut = Math.min(c.fadeOut, c.dur - c.fadeIn); })} />
+      <Slider label="Fondu de sortie" min={0} max={Math.min(5, clip.dur)} step={0.05} digits={2} unit=" s" value={clip.fadeOut} onChange={v => edit(c => { c.fadeOut = Math.min(v, c.dur); c.fadeIn = Math.min(c.fadeIn, c.dur - c.fadeOut); })} />
     </div>}
     {!isAudio && !isText && <div className="sec">
       <h3>Effets et filtres ({clip.fx.length})</h3>
@@ -147,15 +148,15 @@ function TransitionPanel({ clip }: { clip: Clip }) {
     <div className="sec">
       <h3>Réglages</h3>
       <Slider label="Durée" min={0.2} max={3} step={0.1} digits={1} unit=" s" value={tr.dur} onChange={v => edit(c => { if (c.transition) c.transition.dur = v; })} />
-      {def?.params.map(u => {
+      {def && def.params.some(u => ['float', 'int', 'bool'].includes(u.type)) && <details className="adv"><summary>Réglages avancés</summary>{def.params.map(u => {
         const v = tr.params[u.name] ?? u.def;
         if (u.type === 'float' || u.type === 'int') {
           const base = Math.abs(u.def[0] ?? 0), int = u.type === 'int', mx = int ? Math.max(8, base * 3) : Math.max(1, base * 3), mn = (u.def[0] ?? 0) < 0 ? -mx : 0;
-          return <Slider key={u.name} label={u.name} min={mn} max={mx} step={int ? 1 : mx / 200} digits={int ? 0 : 2} value={v[0] ?? 0} onChange={x => edit(c => { if (c.transition) c.transition.params[u.name] = [x]; })} />;
+          return <Slider key={u.name} label={humanize(u.name)} min={mn} max={mx} step={int ? 1 : mx / 200} digits={int ? 0 : 2} value={v[0] ?? 0} onChange={x => edit(c => { if (c.transition) c.transition.params[u.name] = [x]; })} />;
         }
-        if (u.type === 'bool') return <label className="row" key={u.name}><span>{u.name}</span><input type="checkbox" checked={!!v[0]} onChange={e => { st().checkpoint(); edit(c => { if (c.transition) c.transition.params[u.name] = [e.target.checked ? 1 : 0]; }); }} /><span /></label>;
+        if (u.type === 'bool') return <label className="row" key={u.name}><span>{humanize(u.name)}</span><input type="checkbox" checked={!!v[0]} onChange={e => { st().checkpoint(); edit(c => { if (c.transition) c.transition.params[u.name] = [e.target.checked ? 1 : 0]; }); }} /><span /></label>;
         return null;
-      })}
+      })}</details>}
       <div className="actions"><button className="btn sm" onClick={() => { st().apply(p => setTransition(p, clip.id, null)); st().select(null); }}><Icon name="trash" />Retirer</button></div>
     </div>
   </>;

@@ -4,12 +4,15 @@ EZcut est un logiciel de montage vidéo pour Windows 10/11 (macOS visé à terme
 
 ## État
 
-Version 0.1 en développement : premier éditeur fonctionnel (import, timeline une piste vidéo + une piste audio, effets, filtres, transitions, export MP4). Ce qui marche et ce qui manque : `README.md` et `CHANGELOG.md`.
+Version 0.1.0 non publiée : éditeur complet de l'import à l'export (quatre pistes, titres, incrustation, banque d'effets triée, export H.264/H.265, installateur Windows, mise à jour). Ce qui marche et ce qui manque : `README.md` et `CHANGELOG.md`.
 
 ## Commandes
 
 - `npm run dev` — application avec rechargement à chaud ; `npm start` — version construite.
-- `npm run typecheck`, `npm test` (unitaires), `npm run test:export` (intégration : lance la vraie application sans interface, exporte, contrôle le fichier).
+- `npm run typecheck`, `npm test` (unitaires), `npm run test:export` (intégration : lance la vraie application sans interface, exporte, contrôle le fichier), `npm run dist` (installateur dans `release/`).
+- Tri de la banque : `tools/catalog/selection.json` (entrées masquées, transitions essentielles, réglages de vignette) ; planches-contact avec `tools/catalog/sheet.html?kind=effect|filter|transition&page=N`.
+- Après chaque gros morceau, faire relire par des agents indépendants (correction, sécurité, ergonomie) et corriger avant de livrer : les quatre relectures du 2026-11-18 ont trouvé une cinquantaine de défauts que les tests ne voyaient pas.
+- Dans un script shell, ne jamais écrire un `\b` de regex via `node -e` : il devient un caractère de contrôle. Passer par un fichier.
 - Catalogue d'effets : `node tools/catalog/build.mjs <ISF-Files/ISF> <gl-transitions/transitions> --all`, ouvrir `tools/catalog/harness.html` via le serveur de développement, puis relancer `build.mjs` sans `--all`.
 - Electron ne démarre pas si `ELECTRON_RUN_AS_NODE` est défini (c'est le cas dans les terminaux d'agent) : passer par les scripts npm, qui la retirent.
 

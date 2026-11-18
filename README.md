@@ -2,57 +2,60 @@
 
 Logiciel de montage vidéo pour Windows 10/11 (macOS visé à terme), pensé pour les créateurs de contenu et les débutants : des résultats propres sans la complexité d'un outil professionnel.
 
-> **État : version 0.1 en développement.** Le premier éditeur fonctionne : import, montage sur une piste vidéo et une piste audio, effets, filtres, transitions, export MP4. Ce n'est pas encore une version publiable — voir [ce qui manque](#ce-qui-manque).
+> **État : version 0.1.0, non publiée.** L'éditeur est complet de l'import à l'export et s'installe par un installateur Windows. Il n'a pas encore été éprouvé par de vrais utilisateurs : voir les [problèmes connus](CHANGELOG.md).
 
 Licence : [GPL-3.0](LICENSE). Composants tiers : [THIRD-PARTY.md](THIRD-PARTY.md).
 
-## Lancer l'application
+## Ce que fait EZcut
 
-Prérequis : [Node.js](https://nodejs.org) 22 ou plus récent, et [FFmpeg](https://ffmpeg.org) (`ffmpeg` et `ffprobe`) accessible dans le PATH.
+- **Médias** : import par bouton ou glisser-déposer (vidéo, audio, image).
+- **Montage** sur quatre pistes — Titres, Par-dessus, Vidéo, Son : scinder, rogner, déplacer, réordonner, supprimer ; annuler et rétablir.
+- **Titres** : 14 modèles animés, entièrement réglables.
+- **Incrustation** : vidéo ou image par-dessus la vidéo, avec opacité et mode de fusion ; déplacement et redimensionnement directement dans l'aperçu.
+- **Banque** : 71 effets, 21 filtres et 285 transitions, triés, avec aperçu au survol sur votre propre vidéo.
+- **Réglages par clip** : cadrage, couleur, volume, fondus du son.
+- **Formats** : 16:9, 9:16, 1:1, 4:5.
+- **Projet** : enregistrement, sauvegarde automatique, restauration après une fermeture inattendue.
+- **Export** : MP4 en H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe.
+- **Disposition** : panneaux redimensionnables, masquables, interchangeables.
+
+Le bouton d'aide, en haut à droite, liste les raccourcis clavier et les nouveautés.
+
+## Installer
+
+`npm run dist` produit `release/EZcut-Setup-<version>.exe`. L'installateur contient tout, y compris FFmpeg. Il n'est pas signé : Windows affiche un avertissement au lancement.
+
+## Développer
+
+Prérequis : [Node.js](https://nodejs.org) 22 ou plus récent. FFmpeg est fourni par les dépendances.
 
 ```
 npm install
+npm run dev      # application avec rechargement à chaud
 npm start        # construit puis lance l'application
-npm run dev      # lance avec rechargement à chaud pendant le développement
+npm run dist     # construit l'installateur Windows
 ```
-
-## Ce qui fonctionne
-
-- **Médias** : import par bouton ou glisser-déposer (vidéo, audio, image), vignettes.
-- **Timeline** : une piste vidéo et une piste audio, clips à la suite ; scinder, rogner les bords, réordonner par glisser-déposer, supprimer ; zoom ; annuler / rétablir.
-- **Banque** : 130 effets (dont 8 effets de mouvement écrits pour EZcut), 25 filtres et 297 transitions, avec aperçu au survol sur votre vidéo (`Alt` pour l'afficher en grand).
-- **Inspecteur** : échelle, position, rotation, couleur, volume, et les réglages de chaque effet.
-- **Disposition** : panneaux redimensionnables, masquables et interchangeables (boutons en haut à droite), mémorisée entre les sessions.
-- **Formats de projet** : 16:9, 9:16, 1:1, 4:5.
-- **Projet** : enregistrer et ouvrir (`.ezcut`).
-- **Export** : MP4 H.264 / AAC, de 720p à 4K, 24 à 60 images par seconde. L'export passe par le même moteur que l'aperçu.
-
-Raccourcis : `Espace` lecture, `S` scinder, `Suppr` supprimer, `←` `→` image par image, `Ctrl+Z` / `Ctrl+Y`, `Ctrl+S`, `Ctrl+O`.
-
-## Ce qui manque
-
-Plusieurs pistes vidéo, titres et sous-titres, images clés, fondus et outils audio, vitesse, fonctions IA, encodage matériel, autres formats que MP4, installateur et mise à jour automatique. L'ordre prévu est dans la [feuille de route](docs/03-roadmap.md) ; les limites connues de cette version sont dans le [journal des modifications](CHANGELOG.md).
 
 ## Vérifier
 
 ```
 npm run typecheck     # types
-npm test              # tests unitaires des opérations de montage
-npm run test:export   # test d'intégration : import, montage, export, contrôle du fichier produit
+npm test              # tests unitaires : opérations de montage, lecture des projets, annulation
+npm run test:export   # test d'intégration : la vraie application importe, monte, exporte ; le fichier produit est contrôlé
 ```
 
 ## Organisation du code
 
 | Dossier | Rôle |
 |---|---|
-| `src/core` | Modèle de projet et opérations de montage, sans dépendance à l'interface |
-| `src/engine` | Moteur d'effets WebGL2 et lecture / composition |
+| `src/core` | Modèle de projet, opérations de montage, lecture sûre des fichiers de projet ; aucune dépendance à l'interface |
+| `src/engine` | Moteur d'effets WebGL2, lecture, composition des pistes, rendu des titres |
 | `src/effects` | Chargement du catalogue d'effets |
 | `src/export` | Rendu image par image vers FFmpeg |
 | `src/ui` | Interface React |
-| `src/desktop`, `electron/` | Pont vers le système : fichiers, dialogues, FFmpeg |
-| `effects/ezcut` | Effets écrits pour EZcut, au format ISF |
-| `tools/catalog` | Construction et test du catalogue à partir des dépôts amont |
+| `src/desktop`, `electron/` | Pont vers le système : fichiers, dialogues, FFmpeg, mises à jour |
+| `effects/ezcut` | Effets et filtres écrits pour EZcut, au format ISF |
+| `tools/catalog` | Construction, test et tri du catalogue à partir des dépôts amont |
 | `docs/` | [Documentation](docs/README.md) : vision, architecture, feuille de route, méthode |
 
 ## Contribuer

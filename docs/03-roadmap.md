@@ -2,6 +2,8 @@
 
 Chaque version a un thème, un contenu et un critère de sortie vérifiable. Aucune date n'est donnée : l'ordre et les dépendances comptent, les durées seront estimées après la phase 0.
 
+> **Avancement au 2026-11-18.** La version 0.1.0 regroupe ce que ce plan répartissait entre 0.1 et 0.3, plus les titres, les fondus audio et la mise à jour. Restent à faire dans les étapes ci-dessous : images clés, sous-titres (éditeur, SRT), égaliseur, normalisation et ducking, toute l'IA, fond vert, masques, vitesse, courbes, autres formats que MP4, stabilisation, signature de l'installateur. Les prototypes de risque R2, R3 et R5 n'ont pas été menés à part : ils sont à mesurer sur l'application elle-même.
+
 ## Vue d'ensemble
 
 | Version | Thème | Résultat pour l'utilisateur |

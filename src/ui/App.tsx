@@ -43,6 +43,7 @@ async function runAutoTest() {
 export function App() {
   const light = useStore(s => s.light);
   const toast = useStore(s => s.toast);
+  const toastUndo = useStore(s => s.toastUndo);
   const name = useStore(s => s.project.name);
   const dirty = useStore(s => s.dirty);
   const canUndo = useStore(s => s.past.length > 0);
@@ -82,7 +83,8 @@ export function App() {
     }, 20000);
     ez?.onSaveAndClose(async () => { if (await saveProject()) await ez!.closeWindow(); });
 
-    const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '');
+    // On « écrit » seulement dans un champ de texte ou une liste : un curseur ou une case à cocher ne bloque pas les raccourcis.
+    const typing = () => { const a = document.activeElement as HTMLInputElement | null; return !!a && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || (a.tagName === 'INPUT' && !['range', 'checkbox', 'color'].includes(a.type))); };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Alt') { player.alt = true; if (player.hover) e.preventDefault(); return; }
       if (st().exportOpen) return; // pendant un export, le projet ne doit pas changer
@@ -92,16 +94,24 @@ export function App() {
       if (mod && k === 's') { e.preventDefault(); void saveProject(e.shiftKey); return; }
       if (mod && k === 'o') { e.preventDefault(); void openProject(); return; }
       if (typing() || mod) return;
-      if (e.code === 'Space') { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); player.toggle(); }
+      const active = document.activeElement as HTMLElement | null, onRange = (active as HTMLInputElement | null)?.type === 'range';
+      if (e.code === 'Space') {
+        if (active?.tagName === 'BUTTON' && active.matches(':focus-visible')) return; // au clavier, Espace active le bouton ciblé
+        e.preventDefault(); if (onRange) active?.blur(); player.toggle();
+      }
+      else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && onRange) return; // les flèches règlent le curseur ciblé
       else if (k === 's') splitAtPlayhead();
       else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection();
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); player.pause(); player.seek(player.t + (e.key === 'ArrowLeft' ? -1 : 1) / st().project.fps * (e.shiftKey ? 10 : 1)); }
       else if (e.key === 'Home') player.seek(0);
+      else if (e.key === 'End') player.seek(1e9);
     };
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') { player.alt = false; e.preventDefault(); } };
     const onBlur = () => { player.alt = false; };
-    const onDragOver = (e: DragEvent) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); };
-    const onDrop = (e: DragEvent) => { if (e.dataTransfer?.files.length) { e.preventDefault(); void importFiles([...e.dataTransfer.files]).then(m => { if (m.length) st().setTab('media'); }); } };
+    let dropTimer = 0;
+    const dropping = (on: boolean) => document.documentElement.classList.toggle('dropping', on);
+    const onDragOver = (e: DragEvent) => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); dropping(true); clearTimeout(dropTimer); dropTimer = window.setTimeout(() => dropping(false), 200); } };
+    const onDrop = (e: DragEvent) => { dropping(false); if (e.dataTransfer?.files.length) { e.preventDefault(); void importFiles([...e.dataTransfer.files]).then(m => { if (m.length) st().setTab('media'); }); } };
     addEventListener('keydown', onKey); addEventListener('keyup', onKeyUp); addEventListener('blur', onBlur);
     addEventListener('dragover', onDragOver); addEventListener('drop', onDrop);
     return () => { unsub(); clearInterval(autosave); removeEventListener('keydown', onKey); removeEventListener('keyup', onKeyUp); removeEventListener('blur', onBlur); removeEventListener('dragover', onDragOver); removeEventListener('drop', onDrop); };
@@ -133,16 +143,16 @@ export function App() {
       <header className="top">
         <span className="logo"><i><Icon name="play" fill /></i>EZcut</span>
         <span className="tb">
-          <button className="ib" title="Nouveau projet" aria-label="Nouveau projet" onClick={newProject}><Icon name="file" /></button>
+          <button className="ib" title="Nouveau projet" aria-label="Nouveau projet" onClick={() => void newProject()}><Icon name="file" /></button>
           <button className="ib" title="Ouvrir un projet (Ctrl+O)" aria-label="Ouvrir un projet" onClick={() => void openProject()}><Icon name="folder" /></button>
-          <button className="ib" title="Enregistrer (Ctrl+S)" aria-label="Enregistrer" onClick={() => void saveProject()}><Icon name="save" /></button>
+          <button className="ib" title="Enregistrer (Ctrl+S) — Maj + clic : enregistrer sous" aria-label="Enregistrer" onClick={e => void saveProject(e.shiftKey)}><Icon name="save" /></button>
           <span className="sep" />
           <button className="ib" title="Annuler (Ctrl+Z)" aria-label="Annuler" disabled={!canUndo} onClick={() => st().undo()}><Icon name="undo" /></button>
           <button className="ib" title="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled={!canRedo} onClick={() => st().redo()}><Icon name="redo" /></button>
         </span>
         <span className="proj">
-          <span className={dirty ? 'saved no' : 'saved'} title={dirty ? 'Modifications non enregistrées' : 'Enregistré'} />
           <input className="pname" aria-label="Nom du projet" value={name} onChange={e => st().apply(p => ({ ...p, name: e.target.value }), false)} />
+          <span className={dirty ? 'saved no' : 'saved'}>{dirty ? 'Non enregistré' : 'Enregistré'}</span>
         </span>
         <span className="tb">
           <button className="ib" aria-pressed={leftShown} title="Afficher ou masquer le panneau de gauche" aria-label="Panneau de gauche" onClick={() => setL(L.swap ? { showInsp: !L.showInsp } : { showLib: !L.showLib })}><Icon name="pl" /></button>
@@ -152,6 +162,7 @@ export function App() {
           <button className="ib" title="Rétablir la disposition par défaut" aria-label="Disposition par défaut" onClick={() => setL(DEFAULT_LAYOUT)}><Icon name="reset" /></button>
           <span className="sep" />
         </span>
+        <button className="ib" title="Aide : raccourcis et nouveautés" aria-label="Aide" onClick={() => dispatchEvent(new Event('ezcut:whatsnew'))}><Icon name="info" /></button>
         <button className="ib" title="Thème clair / sombre" aria-label="Thème clair ou sombre" onClick={() => st().set({ light: !st().light })}><Icon name="sun" /></button>
         <button className="btn primary" onClick={() => { player.pause(); st().set({ exportOpen: true }); }}><Icon name="export" />Exporter</button>
       </header>
@@ -174,12 +185,13 @@ export function App() {
             <p>EZcut s'est fermé avec un projet en cours. Une sauvegarde automatique du {new Date(recovered.savedAt).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' })} est disponible.</p>
             <footer>
               <button className="btn" onClick={() => { void ez?.autosaveClear(); setRecovered(null); }}>Ignorer</button>
-              <button className="btn primary" onClick={() => { const r = recovered; setRecovered(null); void loadProject(r.json, null, true); }}>Restaurer</button>
+              <button className="btn primary" autoFocus onClick={() => { const r = recovered; setRecovered(null); void loadProject(r.json, null, true); }}>Restaurer</button>
             </footer>
           </div>
         </div>
       )}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {toast && <div className="toast" role="status"><span>{toast}</span>{toastUndo && <button onClick={() => { st().undo(); st().set({ toast: null }); }}>Annuler</button>}</div>}
+      <div className="dropzone" aria-hidden="true"><Icon name="import" />Déposez vos fichiers pour les importer</div>
     </div>
   );
 }

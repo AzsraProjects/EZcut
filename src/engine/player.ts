@@ -3,7 +3,7 @@ import { activeAt, clipAt, fadeGain, projectDuration } from '../core/ops';
 import { BLEND_MODES, emptyProject, type Clip, type Project } from '../core/types';
 import { catalog, type CatEffect, type CatItem } from '../effects/catalog';
 import { Engine, type EffectProgram, type Failed, type Target, type TransitionProgram } from './gl';
-import { animState, drawText } from './text';
+import { animState, drawText, textSize } from './text';
 
 export const TW = 240, TH = 135;
 const PREVIEW_H = 540;
@@ -16,7 +16,7 @@ interface ChainItem { p: EffectProgram; params: Record<string, unknown>; key: st
 interface Frame { a: Want; b?: Want; k?: number; }
 /** Couche au-dessus de la piste principale : incrustation ou titre. */
 interface Layer { clip: Clip; local: number; }
-interface TextCache { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; tex: WebGLTexture; key: string; }
+interface TextCache { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; tex: WebGLTexture; key: string; w: number; h: number; }
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** Attend un événement. Renvoie false si le délai est dépassé. */
@@ -294,22 +294,27 @@ export class Player {
     else this.engine.blit((f.k ?? 0) < 0.5 ? set.ra.tex : set.rb.tex, w, h, out);
   }
 
-  private textTexture(clip: Clip, w: number, h: number, chars: number): WebGLTexture {
+  /** Texture d'un titre, à la taille de son texte (et non du cadre : un long titre n'est jamais coupé quand on le déplace ou le réduit). */
+  private textTexture(clip: Clip, h: number, chars: number): TextCache {
     let c = this.texts.get(clip.id);
-    if (!c) { const canvas = document.createElement('canvas'); c = { canvas, ctx: canvas.getContext('2d')!, tex: this.engine.createTexture(), key: '' }; this.texts.set(clip.id, c); }
-    const key = `${w}x${h}|${chars}|${JSON.stringify(clip.text)}`;
+    if (!c) { const canvas = document.createElement('canvas'); c = { canvas, ctx: canvas.getContext('2d')!, tex: this.engine.createTexture(), key: '', w: 1, h: 1 }; this.texts.set(clip.id, c); }
+    const key = `${h}|${chars}|${JSON.stringify(clip.text)}`;
     if (c.key !== key) {
-      if (c.canvas.width !== w || c.canvas.height !== h) { c.canvas.width = w; c.canvas.height = h; }
-      drawText(c.ctx, w, h, clip.text!, chars);
+      const size = textSize(c.ctx, h, clip.text!);
+      if (c.canvas.width !== size.w || c.canvas.height !== size.h) { c.canvas.width = size.w; c.canvas.height = size.h; }
+      drawText(c.ctx, size.w, size.h, clip.text!, chars, h);
       this.engine.upload(c.tex, c.canvas);
-      c.key = key;
+      c.key = key; c.w = size.w; c.h = size.h;
     }
-    return c.tex;
+    return c;
   }
+  private dropText(id: string) { const c = this.texts.get(id); if (c) { this.engine.deleteTexture(c.tex); c.canvas.width = 0; this.texts.delete(id); } }
 
   /** Compose l'instant t du projet vers out (ou le canvas). C'est le seul chemin de rendu : aperçu et export passent ici. */
   compose(f: Frame | null, layers: Layer[], w: number, h: number, out: Target | null, key: string, t: number, extra?: ChainItem) {
     const set = this.set(w, h);
+    // Seuls les titres à l'écran gardent leur image en mémoire : cent sous-titres ne coûtent pas cent textures.
+    if (this.texts.size) { const shown = new Set(layers.filter(l => l.clip.text).map(l => l.clip.id)); for (const id of [...this.texts.keys()]) if (!shown.has(id)) this.dropText(id); }
     const visible = layers.filter(l => l.clip.text || this.sources.get(l.clip.id)?.loaded);
     if (!visible.length) { this.composeMain(f, w, h, out, set, key, t, extra); return; }
     this.composeMain(f, w, h, set.acc[0], set, key, t, extra);
@@ -321,7 +326,8 @@ export class Player {
       if (clip.text) {
         const a = animState(clip.text, l.local, clip.dur);
         opacity *= a.alpha;
-        this.engine.drawFit(this.textTexture(clip, w, h, a.chars), w, h, w, h, set.fit, { ...clip.transform, scale: clip.transform.scale * a.scale, y: clip.transform.y + a.dy }, true);
+        const tx = this.textTexture(clip, h, a.chars);
+        this.engine.drawFit(tx.tex, tx.w, tx.h, w, h, set.fit, { ...clip.transform, scale: clip.transform.scale * a.scale, y: clip.transform.y + a.dy }, true, true);
       } else {
         const s = this.sources.get(clip.id)!;
         this.engine.drawFit(s.tex, s.w, s.h, w, h, set.fit, clip.transform, true);
@@ -381,7 +387,7 @@ export class Player {
             for (let i = 0; i < px.length; i += 16) { d += Math.abs(px[i] - ref[i]) + Math.abs(px[i + 1] - ref[i + 1]) + Math.abs(px[i + 2] - ref[i + 2]); lum += px[i] + px[i + 1] + px[i + 2]; }
             if (lum > px.length / 16 * 18 && d > top * 1.25) { top = d; best = time; } // une image presque noire n'est pas représentative
           }
-          this.bestTime.set(item.id, best);
+          if (top >= 0) this.bestTime.set(item.id, best); // sinon (image de référence noire) : on réessaiera
         }
         shot(best);
       }
@@ -455,7 +461,7 @@ export class Player {
     for (const c of [...p.video, ...p.overlay]) { alive.add('col' + c.id); for (const f of c.fx) alive.add(f.uid); }
     for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect')
       for (const k of Object.keys(pr.state)) if (k.startsWith('v') && !alive.has(k.slice(1, k.lastIndexOf(':')))) this.engine.releaseState(pr, k);
-    for (const [id, c] of this.texts) if (!texts.has(id)) { this.engine.deleteTexture(c.tex); this.texts.delete(id); }
+    for (const id of [...this.texts.keys()]) if (!texts.has(id)) this.dropText(id);
   }
 
   /* ---------- export ---------- */
@@ -464,7 +470,7 @@ export class Player {
     for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect') this.engine.releaseState(pr, 'x');
     const key = w + 'x' + h, s = this.sets.get(key);
     if (s && !(w === this.vw && h === this.vh) && !(w === TW && h === TH)) { [s.fit, ...s.ping, s.ra, s.rb, s.out, ...s.acc].forEach(t => this.engine.freeTarget(t)); this.sets.delete(key); }
-    for (const c of this.texts.values()) c.key = ''; // les titres seront redessinés à la taille de l'aperçu
+    for (const id of [...this.texts.keys()]) this.dropText(id); // les titres seront redessinés à la taille voulue
   }
 
   /** Amène les sources exactement à l'instant t puis rend l'image w×h. Renvoie les pixels RGBA, lignes de bas en haut. */

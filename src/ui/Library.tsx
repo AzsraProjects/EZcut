@@ -34,12 +34,11 @@ const FxTile = memo(function FxTile({ item, observe }: { item: CatItem; observe:
     const ctx = canvas.current?.getContext('2d'); if (ctx) player.requestThumb(item, ctx);
   };
   return (
-    <button className={live ? 'tile live' : 'tile'} ref={el => observe(el, item)} title={('desc' in item && item.desc) || item.label}
+    <button className={live ? 'tile live' : 'tile'} ref={el => observe(el, item)} title={`${('desc' in item && item.desc) || item.label}\n${item.by} · licence ${item.license}`}
       draggable onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-item', item.id); e.dataTransfer.effectAllowed = 'copy'; }}
       onPointerEnter={enter} onPointerLeave={leave} onFocus={enter} onBlur={leave} onClick={() => applyItem(item)}>
       <span className="thumb"><canvas ref={canvas} width={TW} height={TH} /><span className="tag">Aperçu</span><span className="add"><Icon name="plus" /></span></span>
       <span className="tname">{item.label}</span>
-      <span className="tby">{item.by} · {item.license}</span>
     </button>
   );
 });
@@ -109,7 +108,9 @@ export function Library() {
   }, [list]);
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return list.filter(it => (cat === 'Tous' || it.cat.includes(cat)) && (!s || it.label.toLowerCase().includes(s) || it.by.toLowerCase().includes(s)));
+    // La recherche porte sur le nom affiché, le nom d'origine, la catégorie, la description et l'auteur.
+    const hay = (it: CatItem) => [it.label, it.name, it.by, ...it.cat, 'desc' in it ? it.desc : ''].join(' ').toLowerCase();
+    return list.filter(it => (cat === 'Tous' || it.cat.includes(cat)) && (!s || hay(it).includes(s)));
   }, [list, cat, q]);
 
   // Les vignettes ne sont calculées que pour les tuiles visibles.
@@ -143,7 +144,7 @@ export function Library() {
               ? <div className="empty"><Icon name="import" /><b>Déposez vos vidéos, sons et images ici</b><span>ou cliquez sur Importer. Un clic sur un média l'ajoute à la timeline.</span></div>
               : media.map(m => <MediaTile key={m.id} m={m} />)}
           </div>
-          {media.length > 0 && <div className="libfoot"><span>Clic : ajouter à la suite</span><span>· <kbd>Maj</kbd> + clic ou glisser sur V2 : incrustation</span></div>}
+          {media.length > 0 && <div className="libfoot"><span>Clic : ajouter à la suite</span><span>· <kbd>Maj</kbd> + clic : poser par-dessus la vidéo (logo, image dans l'image)</span></div>}
         </div>
       ) : tab === 'titles' ? (
         <div className="libmain solo">
@@ -164,7 +165,7 @@ export function Library() {
             </div>
             <div className="tiles" ref={scroller}>
               {!ready ? <div className="empty">Chargement de la banque…</div>
-                : shown.length === 0 ? <div className="empty">Aucun résultat.</div>
+                : shown.length === 0 ? <div className="empty"><b>Aucun résultat{q.trim() ? ` pour « ${q.trim()} »` : ''}{cat !== 'Tous' ? ` dans ${cat}` : ''}.</b>{cat !== 'Tous' && q.trim() && <button className="btn sm" onClick={() => setCat('Tous')}>Chercher dans tout</button>}</div>
                 : shown.map(it => <FxTile key={it.id} item={it} observe={observe} />)}
             </div>
             <div className="libfoot"><span>{FOOT[tab]}</span><span>· Survol : aperçu</span><span>· <kbd>Alt</kbd> : en grand</span><span>· Clic : appliquer</span></div>

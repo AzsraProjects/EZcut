@@ -309,13 +309,15 @@ o=vec4(mix(b,r,a),1.);}`);
   }
 
   /** Dessine une source srcW×srcH dans un cadre w×h en conservant ses proportions, avec transformation. */
-  drawFit(tex: WebGLTexture, srcW: number, srcH: number, w: number, h: number, out: Target | null, tf: Transform = { scale: 1, x: 0, y: 0, rot: 0 }, keepAlpha = false) {
+  drawFit(tex: WebGLTexture, srcW: number, srcH: number, w: number, h: number, out: Target | null, tf: Transform = { scale: 1, x: 0, y: 0, rot: 0 }, keepAlpha = false, natural = false) {
     const gl = this.gl, p = this.fit, A = w / h, sa = (srcW || w) / (srcH || h);
     gl.useProgram(p.prog);
     this.bind(out, w, h);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(this.u(p, 't'), 0);
-    gl.uniform2f(this.u(p, 'box'), sa > A ? A : sa, sa > A ? A / sa : 1);
+    // natural : la source est posée à sa taille réelle (un pixel pour un pixel), au lieu d'être ajustée au cadre.
+    if (natural) gl.uniform2f(this.u(p, 'box'), srcW / h, srcH / h);
+    else gl.uniform2f(this.u(p, 'box'), sa > A ? A : sa, sa > A ? A / sa : 1);
     gl.uniform2f(this.u(p, 'off'), tf.x, tf.y);
     gl.uniform1f(this.u(p, 'scale'), Math.max(0.01, tf.scale));
     gl.uniform1f(this.u(p, 'rot'), tf.rot * Math.PI / 180);

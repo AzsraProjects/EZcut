@@ -8,10 +8,11 @@ import { subscribeTime, timecode } from './time';
 export function Viewer() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const cur = useRef<HTMLElement>(null);
+  const lastWheel = useRef(0);
   const playing = useStore(s => s.playing);
   const fps = useStore(s => s.project.fps);
   const total = useStore(s => projectDuration(s.project));
-  const empty = useStore(s => s.project.video.length === 0);
+  const empty = useStore(s => projectDuration(s.project) === 0);
   const [muted, setMuted] = useState(false);
 
   useEffect(() => { player.setView(canvas.current); return () => player.setView(null); }, []);
@@ -33,8 +34,9 @@ export function Viewer() {
   const wheel = (e: React.WheelEvent) => {
     const clip = target();
     if (!clip) return;
-    const s = useStore.getState(), id = clip.id;
-    s.checkpoint();
+    const s = useStore.getState(), id = clip.id, now = performance.now();
+    if (now - lastWheel.current > 800) s.checkpoint(); // une série de crans rapprochés = un seul geste
+    lastWheel.current = now;
     s.apply(q => patchClip(q, id, c => { c.transform.scale = Math.max(0.05, Math.min(8, c.transform.scale * (e.deltaY < 0 ? 1.05 : 1 / 1.05))); }), false);
   };
   useEffect(() => subscribeTime(t => { if (cur.current) cur.current.textContent = timecode(t, fps); }), [fps]);
@@ -58,7 +60,7 @@ export function Viewer() {
           <button className="ib big" aria-label={playing ? 'Pause' : 'Lecture'} title="Lecture / pause (Espace)" onClick={() => player.toggle()}><Icon name={playing ? 'pause' : 'play'} fill /></button>
           <button className="ib" aria-label="Coupe suivante" title="Coupe suivante" onClick={() => jump(1)}><Icon name="next" fill /></button>
         </span>
-        <button className="ib" aria-label={muted ? 'Activer le son' : 'Couper le son'} title="Son" onClick={() => { player.muted = !muted; setMuted(!muted); }}><Icon name={muted ? 'mute' : 'vol'} /></button>
+        <button className="ib" aria-label={muted ? 'Activer le son' : 'Couper le son'} title="Couper ou rétablir le son de l'aperçu" onClick={() => { player.muted = !muted; setMuted(!muted); }}><Icon name={muted ? 'mute' : 'vol'} /></button>
         <button className="ib" aria-label="Plein écran" title="Plein écran" onClick={() => { void canvas.current?.requestFullscreen?.().catch(() => {}); }}><Icon name="full" /></button>
       </div>
     </section>

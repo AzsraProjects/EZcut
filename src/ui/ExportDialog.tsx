@@ -19,19 +19,23 @@ export function ExportDialog() {
   const [progress, setProgress] = useState<[number, number] | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
   const cancel = useRef(false);
+  const started = useRef(0);
   const duration = projectDuration(project), size = exportSize(project, height);
   const running = !!progress && !result;
+  const pct = progress ? progress[0] / progress[1] : 0;
+  const left = pct > 0.02 ? (performance.now() - started.current) / 1000 * (1 - pct) / pct : NaN;
+  const eta = Number.isNaN(left) ? '' : left < 50 ? `· environ ${Math.max(5, Math.ceil(left / 5) * 5)} s restantes` : `· environ ${Math.ceil(left / 60)} min restante${left >= 90 ? 's' : ''}`;
   const close = () => { if (!running) useStore.getState().set({ exportOpen: false }); };
 
   const start = async () => {
-    cancel.current = false; setResult(null); setProgress([0, 1]);
+    cancel.current = false; setResult(null); setProgress([0, 1]); started.current = performance.now();
     const r = await exportProject(project, { height, fps, codec, software }, (d, t) => setProgress([d, t]), () => cancel.current);
     if (r.cancelled) { setProgress(null); setResult(null); return; }
     setResult(r);
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true" aria-label="Exporter la vidéo" onPointerDown={e => { if (e.target === e.currentTarget) close(); }}>
+    <div className="modal" role="dialog" aria-modal="true" aria-label="Exporter la vidéo" onPointerDown={e => { if (e.target === e.currentTarget) close(); }} onKeyDown={e => { if (e.key === 'Escape') close(); }}>
       <div className="dialog">
         <header><b>Exporter la vidéo</b><button className="ib small" aria-label="Fermer" disabled={running} onClick={close}><Icon name="x" /></button></header>
         {!ez && <p className="warn">L'export n'est disponible que dans l'application de bureau.</p>}
@@ -46,17 +50,17 @@ export function ExportDialog() {
           <label className="row"><span>Cadence</span><select className="sel" value={fps} onChange={e => setFps(+e.target.value)}>{[24, 25, 30, 50, 60].map(f => <option key={f} value={f}>{f} images/s</option>)}</select></label>
           <p className="meta">{timecode(duration, fps)} · {size.width} × {size.height} · {Math.round(duration * fps)} images</p>
           {result && !result.ok && <p className="warn">L'export a échoué. {result.error}</p>}
-          <footer><button className="btn" onClick={close}>Annuler</button><button className="btn primary" disabled={!ez || !duration} onClick={() => void start()}><Icon name="export" />Exporter</button></footer>
+          <footer><button className="btn" onClick={close}>Annuler</button><button className="btn primary" autoFocus disabled={!ez || !duration} onClick={() => void start()}><Icon name="export" />Exporter</button></footer>
         </>}
         {running && progress && <>
-          <p className="meta">Rendu de l'image {progress[0]} sur {progress[1]}…</p>
-          <div className="bar"><i style={{ width: `${progress[0] / progress[1] * 100}%` }} /></div>
+          <p className="meta">{Math.floor(pct * 100)} % {eta}</p>
+          <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.floor(pct * 100)} aria-label="Avancement de l'export"><i style={{ width: `${pct * 100}%` }} /></div>
           <footer><button className="btn" onClick={() => { cancel.current = true; }}>Annuler l'export</button></footer>
         </>}
         {result?.ok && <>
           <p className="done">Vidéo exportée en {result.seconds?.toFixed(1)} s.</p>
           <p className="meta path">{result.path}</p>
-          <footer><button className="btn" onClick={() => { void ez?.showLastExport(); }}><Icon name="folder" />Afficher dans le dossier</button><button className="btn primary" onClick={close}>Terminer</button></footer>
+          <footer><button className="btn" onClick={() => { void ez?.showLastExport(); }}><Icon name="folder" />Afficher dans le dossier</button><button className="btn primary" autoFocus onClick={close}>Terminer</button></footer>
         </>}
       </div>
     </div>

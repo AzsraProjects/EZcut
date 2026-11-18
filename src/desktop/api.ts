@@ -31,9 +31,12 @@ export interface EzApi {
   /** Réouverture d'un projet : le processus principal décide, avec l'utilisateur, quels fichiers redeviennent lisibles. */
   relinkMedia(paths: string[]): Promise<ImportedFile[]>;
   newProject(): Promise<void>;
+  confirmDiscard(): Promise<'save' | 'discard' | 'cancel'>;
   pathForFile(file: File): string;
   saveProject(json: string, saveAs: boolean): Promise<string | null>;
   openProject(): Promise<{ path: string; json: string } | null>;
+  /** À appeler une fois le fichier ouvert reconnu comme un projet valide : il devient le projet courant. */
+  projectOpened(): Promise<void>;
   /** Encodeur matériel disponible pour chaque codec (nvenc, qsv, amf), ou null. */
   encoders(): Promise<{ h264: string | null; hevc: string | null }>;
   setDirty(dirty: boolean): Promise<void>;

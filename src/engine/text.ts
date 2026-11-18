@@ -6,12 +6,23 @@ export const FONTS = ['Segoe UI', 'Arial', 'Bahnschrift', 'Impact', 'Georgia', '
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const rgba = (hex: string, a: number) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
 
-/** Dessine le titre centré dans un canvas w×h à fond transparent. chars limite le nombre de caractères visibles (machine à écrire). */
-export function drawText(ctx: CanvasRenderingContext2D, w: number, h: number, style: TextStyle, chars = Infinity) {
+const fontOf = (style: TextStyle, px: number) => `${style.weight} ${px}px "${style.font}", "Segoe UI", system-ui, sans-serif`;
+
+/** Taille du canvas nécessaire pour un titre dans une image de hauteur frameH : le bloc de texte plus la place du cartouche, du contour et de l'ombre. */
+export function textSize(ctx: CanvasRenderingContext2D, frameH: number, style: TextStyle): { w: number; h: number } {
+  const px = Math.max(4, style.size * frameH), lines = style.content.split('\n').slice(0, 24);
+  ctx.font = fontOf(style, px);
+  const blockW = Math.max(1, ...lines.map(l => ctx.measureText(l).width));
+  return { w: Math.min(8192, Math.ceil(blockW + px * 1.6)), h: Math.min(8192, Math.ceil(px * 1.22 * lines.length + px * 1.4)) };
+}
+
+/** Dessine le titre centré dans un canvas w×h à fond transparent, pour une image de hauteur frameH (par défaut h).
+ *  chars limite le nombre de caractères visibles (machine à écrire). */
+export function drawText(ctx: CanvasRenderingContext2D, w: number, h: number, style: TextStyle, chars = Infinity, frameH = h) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const px = Math.max(4, style.size * h), lines = style.content.split('\n').slice(0, 24);
-  ctx.font = `${style.weight} ${px}px "${style.font}", "Segoe UI", system-ui, sans-serif`;
+  const px = Math.max(4, style.size * frameH), lines = style.content.split('\n').slice(0, 24);
+  ctx.font = fontOf(style, px);
   ctx.textBaseline = 'middle'; ctx.textAlign = style.align; ctx.lineJoin = 'round';
   // La mise en page se fait sur le texte complet : la machine à écrire ne fait pas bouger les lignes.
   const blockW = Math.max(1, ...lines.map(l => ctx.measureText(l).width)), lineH = px * 1.22, blockH = lineH * lines.length;
