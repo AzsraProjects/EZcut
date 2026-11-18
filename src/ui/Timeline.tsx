@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { addOverlay, appendClip, isFree, moveClip, moveFree, projectDuration, startsOf, trimClip } from '../core/ops';
 import type { Clip, Project, TrackId } from '../core/types';
 import { catalog } from '../effects/catalog';
@@ -107,6 +107,26 @@ export function Timeline({ height }: { height: number }) {
   const wasEmpty = useRef(true);
   useEffect(() => { if (wasEmpty.current && count > 0) fit(); wasEmpty.current = count === 0; }, [count]);
 
+  // Ctrl + molette : zoom centré sur l'instant placé sous le pointeur, qui ne bouge pas à l'écran.
+  const anchor = useRef<{ t: number; x: number } | null>(null);
+  useEffect(() => {
+    const sc = scroller.current;
+    if (!sc) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // sans Ctrl : défilement normal
+      e.preventDefault();
+      const cur = st().pps, x = e.clientX - sc.getBoundingClientRect().left - HEAD;
+      const next = Math.max(4, Math.min(240, cur * Math.exp(-e.deltaY * 0.0015)));
+      if (next === cur) return;
+      anchor.current = { t: Math.max(0, (sc.scrollLeft + x) / cur), x };
+      st().set({ pps: next });
+    };
+    sc.addEventListener('wheel', onWheel, { passive: false }); // passive: false pour pouvoir empêcher le zoom de page
+    return () => sc.removeEventListener('wheel', onWheel);
+  }, []);
+  // Une fois la timeline redessinée à la nouvelle échelle, le défilement est recalé sur l'instant visé.
+  useLayoutEffect(() => { const a = anchor.current, sc = scroller.current; if (a && sc) { sc.scrollLeft = Math.max(0, a.t * pps - a.x); anchor.current = null; } }, [pps]);
+
   // Déplacement de la tête de lecture : clic ou glissement dans la règle.
   const scrub = (e: React.PointerEvent) => {
     const el = e.currentTarget as HTMLElement, at = (x: number) => player.seek((x - el.getBoundingClientRect().left) / pps);
@@ -156,7 +176,7 @@ export function Timeline({ height }: { height: number }) {
         <button className="ib" title="Supprimer la sélection (Suppr)" aria-label="Supprimer" disabled={!sel} onClick={deleteSelection}><Icon name="trash" /></button>
         <span className="tinfo">{count} clip{count > 1 ? 's' : ''} · {timecode(total, project.fps)}</span>
         <button className="btn sm fit" title="Afficher tout le montage" disabled={!count} onClick={fit}>Ajuster</button>
-        <label className="zoom">Zoom<input type="range" min={4} max={240} step={1} value={pps} onChange={e => st().set({ pps: +e.target.value })} /></label>
+        <label className="zoom" title="Zoom de la timeline — aussi : Ctrl + molette sur la timeline">Zoom<input type="range" min={4} max={240} step={1} value={pps} onChange={e => st().set({ pps: +e.target.value })} /></label>
       </div>
       <div className="tscroll" ref={scroller}>
         <div className="tracks" style={{ width: HEAD + width }}>

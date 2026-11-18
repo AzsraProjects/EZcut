@@ -19,6 +19,8 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Effets et filtres séparés : un effet anime ou déforme l'image, un filtre en change les couleurs.
 - Régler l'échelle, la position, la rotation, la couleur, le volume et les fondus du son de chaque clip.
 - Choisir le format du projet : 16:9, 9:16, 1:1 ou 4:5.
+- Aperçu toujours net : il est calculé à la taille où il est affiché, avec un réglage de qualité pour les ordinateurs modestes.
+- Zoom de la timeline avec Ctrl + molette, centré sur le pointeur.
 - Disposition libre : chaque panneau se redimensionne, se masque, et la bibliothèque et l'inspecteur peuvent échanger de côté.
 - Enregistrer et rouvrir un projet ; sauvegarde automatique toutes les 20 secondes, proposée à la restauration après une fermeture inattendue.
 - Exporter en MP4, H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe (NVIDIA, Intel, AMD).

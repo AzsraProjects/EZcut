@@ -75,6 +75,7 @@ export function Updates() {
               <dt><kbd>Ctrl</kbd> + <kbd>O</kbd></dt><dd>Ouvrir un projet</dd>
               <dt><kbd>Maj</kbd> + clic sur un média</dt><dd>Le poser par-dessus la vidéo</dd>
               <dt><kbd>Alt</kbd> + survol d'un effet</dt><dd>L'essayer en grand dans l'aperçu</dd>
+              <dt><kbd>Ctrl</kbd> + molette sur la timeline</dt><dd>Zoomer, dézoomer autour du pointeur</dd>
               <dt>Glisser, molette dans l'aperçu</dt><dd>Déplacer, redimensionner le clip sélectionné</dd>
             </dl>
             <h4>Nouveautés de cette version</h4>

@@ -7,6 +7,9 @@ import { animState, drawText, textSize } from './text';
 
 export const TW = 240, TH = 135;
 const PREVIEW_H = 540;
+/** Hauteurs de rendu de l'aperçu : on prend la première qui couvre la taille affichée, pour ne pas recréer les tampons à chaque pixel de redimensionnement. */
+const PREVIEW_STEPS = [270, 360, 540, 720, 900, 1080, 1440, 2160];
+export type PreviewQuality = 'auto' | 'full' | 'half' | 'quarter';
 
 interface Source { url: string; kind: 'video' | 'image'; el: HTMLVideoElement | HTMLImageElement; tex: WebGLTexture; w: number; h: number; loaded: boolean; }
 interface Want { clip: Clip; index: number; start: number; time: number; live: boolean; }
@@ -44,6 +47,10 @@ export class Player {
   /** Anomalies du moteur (shader qui ne compile pas, média illisible), pour le journal. */
   onLog: (msg: string, data?: unknown) => void = () => {};
   vw = 960; vh = PREVIEW_H;
+  /** Qualité de l'aperçu : auto = à la taille réelle d'affichage (net sans calcul inutile) ; sinon une fraction de la résolution du projet. */
+  quality: PreviewQuality = 'auto';
+  /** Hauteur à laquelle l'image est affichée à l'écran, en pixels réels (taille du panneau × densité de l'écran). */
+  displayHeight = PREVIEW_H;
 
   private glc!: HTMLCanvasElement;
   private view: CanvasRenderingContext2D | null = null;
@@ -414,8 +421,18 @@ export class Player {
     if (this.jumped) for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect' && pr.def.passes?.some(x => (x as { PERSISTENT?: unknown; persistent?: unknown }).PERSISTENT || (x as { persistent?: unknown }).persistent)) this.engine.releaseState(pr, 'v');
 
     // dimensions de l'aperçu selon le format du projet
-    const vw = Math.max(TW, Math.round(PREVIEW_H * p.width / p.height / 2) * 2);
-    if (vw !== this.vw) { this.vw = vw; this.glc.width = vw; }
+    // Une image calculée plus petite que sa taille d'affichage est floue : l'aperçu est rendu à la taille où il est vu,
+    // sans dépasser la résolution du projet (au-delà, il n'y a plus de détail à gagner).
+    const want = this.quality === 'full' ? p.height : this.quality === 'half' ? p.height / 2 : this.quality === 'quarter' ? p.height / 4 : this.displayHeight;
+    const vh = Math.max(TH, Math.min(p.height, this.quality === 'auto' ? PREVIEW_STEPS.find(s => s >= want) ?? 2160 : Math.round(want / 2) * 2));
+    const vw = Math.max(TW, Math.round(vh * p.width / p.height / 2) * 2);
+    if (vw !== this.vw || vh !== this.vh) {
+      // Les tampons de l'ancienne taille sont rendus (cibles de rendu et mémoire des effets).
+      const old = this.sets.get(this.vw + 'x' + this.vh);
+      if (old && !(this.vw === TW && this.vh === TH)) { [old.fit, ...old.ping, old.ra, old.rb, old.out, ...old.acc].forEach(t => this.engine.freeTarget(t)); this.sets.delete(this.vw + 'x' + this.vh); }
+      for (const pr of this.progs.values()) if (pr.ok && pr.kind === 'effect') this.engine.releaseState(pr, 'v');
+      this.vw = vw; this.vh = vh; this.glc.width = vw; this.glc.height = vh;
+    }
     if (this.view && (this.view.canvas.width !== vw || this.view.canvas.height !== this.vh)) { this.view.canvas.width = vw; this.view.canvas.height = this.vh; }
 
     // 1. Horloge : en lecture, la vidéo de la piste principale donne l'heure (image et son restent synchrones).

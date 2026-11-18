@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { findClip, patchClip, projectDuration, trackStarts } from '../core/ops';
-import { player } from '../engine/player';
+import { player, type PreviewQuality } from '../engine/player';
 import { Icon } from './Icon';
 import { useStore } from './store';
 import { subscribeTime, timecode } from './time';
@@ -16,6 +16,18 @@ export function Viewer() {
   const [muted, setMuted] = useState(false);
 
   useEffect(() => { player.setView(canvas.current); return () => player.setView(null); }, []);
+  // L'aperçu est calculé à la taille où il est réellement affiché (panneau × densité de l'écran) : il reste net quand on l'agrandit.
+  const aspect = useStore(s => s.project.width / s.project.height);
+  useEffect(() => {
+    const el = canvas.current;
+    if (!el) return;
+    const measure = () => { const r = el.getBoundingClientRect(); player.displayHeight = Math.max(1, Math.min(r.height, r.width / aspect)) * (window.devicePixelRatio || 1); };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el); measure();
+    addEventListener('resize', measure); // changement d'écran ou de zoom du système
+    return () => { ro.disconnect(); removeEventListener('resize', measure); };
+  }, [aspect]);
+  const [quality, setQuality] = useState<PreviewQuality>('auto');
   const movable = useStore(s => { const f = s.sel?.kind === 'clip' ? findClip(s.project, s.sel.id) : null; return !!f && f.track !== 'audio'; });
 
   // Dans l'aperçu, le clip sélectionné se déplace à la souris et se redimensionne à la molette.
@@ -61,6 +73,9 @@ export function Viewer() {
           <button className="ib" aria-label="Coupe suivante" title="Coupe suivante" onClick={() => jump(1)}><Icon name="next" fill /></button>
         </span>
         <button className="ib" aria-label={muted ? 'Activer le son' : 'Couper le son'} title="Couper ou rétablir le son de l'aperçu" onClick={() => { player.muted = !muted; setMuted(!muted); }}><Icon name={muted ? 'mute' : 'vol'} /></button>
+        <select className="sel" aria-label="Qualité de l'aperçu" title="Qualité de l'aperçu. Automatique : nette à la taille affichée. Réduire soulage un ordinateur qui peine à lire en fluide." value={quality} onChange={e => { const q = e.target.value as PreviewQuality; setQuality(q); player.quality = q; }}>
+          <option value="auto">Qualité : auto</option><option value="full">Pleine</option><option value="half">1/2</option><option value="quarter">1/4</option>
+        </select>
         <button className="ib" aria-label="Plein écran" title="Plein écran" onClick={() => { void canvas.current?.requestFullscreen?.().catch(() => {}); }}><Icon name="full" /></button>
       </div>
     </section>
