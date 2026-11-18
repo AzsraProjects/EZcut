@@ -4,7 +4,18 @@ EZcut est un logiciel de montage vidéo pour Windows 10/11 (macOS visé à terme
 
 ## État
 
-Phase 0 : le dépôt ne contient que de la documentation. Stack (Electron, TypeScript, React, WebGL2, FFmpeg), licence (GPL-3.0) et format des effets sont validés ; la stack reste conditionnée aux prototypes R1 à R5 (`docs/02-architecture.md`). Prochaines étapes : maquette de l'écran principal à valider, puis prototypes.
+Version 0.1 en développement : premier éditeur fonctionnel (import, timeline une piste vidéo + une piste audio, effets, filtres, transitions, export MP4). Ce qui marche et ce qui manque : `README.md` et `CHANGELOG.md`.
+
+## Commandes
+
+- `npm run dev` — application avec rechargement à chaud ; `npm start` — version construite.
+- `npm run typecheck`, `npm test` (unitaires), `npm run test:export` (intégration : lance la vraie application sans interface, exporte, contrôle le fichier).
+- Catalogue d'effets : `node tools/catalog/build.mjs <ISF-Files/ISF> <gl-transitions/transitions> --all`, ouvrir `tools/catalog/harness.html` via le serveur de développement, puis relancer `build.mjs` sans `--all`.
+- Electron ne démarre pas si `ELECTRON_RUN_AS_NODE` est défini (c'est le cas dans les terminaux d'agent) : passer par les scripts npm, qui la retirent.
+
+## Rythme de travail actuel
+
+Le 2026-11-18, l'utilisateur a choisi de valider la maquette une fois puis de laisser enchaîner la construction sans arrêt à chaque fonctionnalité. La règle ci-dessous redevient stricte pour tout changement de direction visuelle ou de périmètre.
 
 Tout code dépendant du système reste dans `apps/desktop` et la détection des encodeurs : pas de chemin ni d'appel propre à Windows ailleurs.
 

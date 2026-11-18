@@ -1,26 +1,58 @@
 # EZcut
 
-Logiciel de montage vidéo pour Windows 10/11, pensé pour les créateurs de contenu (YouTube, TikTok, Twitch) et les débutants : des résultats propres sans la complexité d'un outil professionnel.
+Logiciel de montage vidéo pour Windows 10/11 (macOS visé à terme), pensé pour les créateurs de contenu et les débutants : des résultats propres sans la complexité d'un outil professionnel.
 
-> **État du projet : phase 0.** Aucun code n'existe encore. Ce dépôt contient la vision, l'architecture, la feuille de route et les règles de travail. Les [décisions structurantes](docs/README.md#décisions) sont validées ; la suite est la maquette de l'interface puis les prototypes de risque.
+> **État : version 0.1 en développement.** Le premier éditeur fonctionne : import, montage sur une piste vidéo et une piste audio, effets, filtres, transitions, export MP4. Ce n'est pas encore une version publiable — voir [ce qui manque](#ce-qui-manque).
 
-Licence : [GPL-3.0](LICENSE).
+Licence : [GPL-3.0](LICENSE). Composants tiers : [THIRD-PARTY.md](THIRD-PARTY.md).
 
-## Documentation
+## Lancer l'application
 
-| Document | Contenu |
+Prérequis : [Node.js](https://nodejs.org) 22 ou plus récent, et [FFmpeg](https://ffmpeg.org) (`ffmpeg` et `ffprobe`) accessible dans le PATH.
+
+```
+npm install
+npm start        # construit puis lance l'application
+npm run dev      # lance avec rechargement à chaud pendant le développement
+```
+
+## Ce qui fonctionne
+
+- **Médias** : import par bouton ou glisser-déposer (vidéo, audio, image), vignettes.
+- **Timeline** : une piste vidéo et une piste audio, clips à la suite ; scinder, rogner les bords, réordonner par glisser-déposer, supprimer ; zoom ; annuler / rétablir.
+- **Banque** : 122 effets, 25 filtres et 297 transitions open source, avec aperçu au survol sur votre vidéo (`Alt` pour l'afficher en grand).
+- **Inspecteur** : échelle, position, rotation, couleur, volume, et les réglages de chaque effet.
+- **Formats de projet** : 16:9, 9:16, 1:1, 4:5.
+- **Projet** : enregistrer et ouvrir (`.ezcut`).
+- **Export** : MP4 H.264 / AAC, de 720p à 4K, 24 à 60 images par seconde. L'export passe par le même moteur que l'aperçu.
+
+Raccourcis : `Espace` lecture, `S` scinder, `Suppr` supprimer, `←` `→` image par image, `Ctrl+Z` / `Ctrl+Y`, `Ctrl+S`, `Ctrl+O`.
+
+## Ce qui manque
+
+Plusieurs pistes vidéo, titres et sous-titres, images clés, fondus et outils audio, vitesse, fonctions IA, encodage matériel, autres formats que MP4, installateur et mise à jour automatique. L'ordre prévu est dans la [feuille de route](docs/03-roadmap.md) ; les limites connues de cette version sont dans le [journal des modifications](CHANGELOG.md).
+
+## Vérifier
+
+```
+npm run typecheck     # types
+npm test              # tests unitaires des opérations de montage
+npm run test:export   # test d'intégration : import, montage, export, contrôle du fichier produit
+```
+
+## Organisation du code
+
+| Dossier | Rôle |
 |---|---|
-| [docs/README.md](docs/README.md) | Index de la documentation et décisions ouvertes |
-| [01 — Vision produit](docs/01-vision.md) | Cible, principes, périmètre, non-objectifs |
-| [02 — Architecture](docs/02-architecture.md) | Stack proposée, modules, pipeline de rendu, format de projet |
-| [03 — Feuille de route](docs/03-roadmap.md) | Phases, contenu de chaque version, critères de sortie |
-| [04 — Banque d'effets](docs/04-banque-effets.md) | Sources open source, format des packs, aperçu au survol |
-| [05 — Interface](docs/05-ui-ux.md) | Disposition, maquettes filaires, thèmes, règles d'ergonomie |
-| [06 — Méthode de travail](docs/06-methode.md) | Cycle proposition → aperçu → validation → implémentation, rôles des agents |
-| [07 — Tests](docs/07-tests.md) | Stratégie de test et budgets de performance |
-| [08 — Versions et mises à jour](docs/08-versions-mises-a-jour.md) | Branches, versions, releases, mise à jour automatique, notes de version |
-| [ADR](docs/adr/README.md) | Registre des décisions d'architecture |
+| `src/core` | Modèle de projet et opérations de montage, sans dépendance à l'interface |
+| `src/engine` | Moteur d'effets WebGL2 et lecture / composition |
+| `src/effects` | Chargement du catalogue d'effets |
+| `src/export` | Rendu image par image vers FFmpeg |
+| `src/ui` | Interface React |
+| `src/desktop`, `electron/` | Pont vers le système : fichiers, dialogues, FFmpeg |
+| `tools/catalog` | Construction et test du catalogue à partir des dépôts amont |
+| `docs/` | [Documentation](docs/README.md) : vision, architecture, feuille de route, méthode |
 
 ## Contribuer
 
-Voir [CONTRIBUTING.md](CONTRIBUTING.md). Règle principale : aucune fonctionnalité significative n'est implémentée sans proposition écrite, aperçu visuel et validation préalable.
+Voir [CONTRIBUTING.md](CONTRIBUTING.md).

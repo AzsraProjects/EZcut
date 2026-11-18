@@ -1,0 +1,41 @@
+<!doctype html><meta charset="utf-8"><title>EZcut — test du catalogue</title>
+<!-- À ouvrir via le serveur de développement : http://localhost:5173/tools/catalog/harness.html
+     Compile et exécute chaque shader du catalogue, puis enregistre tools/catalog/curation.json. -->
+<canvas id="c" width="320" height="180"></canvas><pre id="o">en cours…</pre>
+<script type="module">
+import { Engine } from '/src/engine/gl.ts';
+(async () => {
+  const d = await (await fetch('/catalog/effets.json')).json();
+  const load = s => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = s; });
+  const [a, b] = await Promise.all([load('/sample/poster-a.jpg'), load('/sample/poster-b.jpg')]);
+  const E = new Engine(document.getElementById('c')), W = 160, H = 90;
+  const ta = E.createTexture(); E.upload(ta, a); const tb = E.createTexture(); E.upload(tb, b);
+  E.blit(ta, W, H, null); const ref = E.readPixels(W, H, null);
+  const stat = px => { let l = 0, df = 0; for (let i = 0; i < px.length; i += 4) { l += px[i] + px[i + 1] + px[i + 2]; df += Math.abs(px[i] - ref[i]) + Math.abs(px[i + 1] - ref[i + 1]) + Math.abs(px[i + 2] - ref[i + 2]); } const n = px.length / 4 * 3; return [l / n, df / n]; };
+  const run = (e, key, params, moving) => { const p = E.compileEffect(e); if (!p.ok) return null; for (let f = 0; f < 5; f++) E.renderEffect(p, moving && f < 3 ? tb : ta, W, H, null, { time: 1 + f / 30, frame: f, key, params }); return stat(E.readPixels(W, H, null)); };
+  const cur = { exclude: [], preview: {}, temporal: [], log: [] };
+  for (const e of d.effects) {
+    const s = run(e, 'a');
+    if (!s) { cur.exclude.push(e.id); cur.log.push(e.name + ': compile'); continue; }
+    if (s[0] < 4) { cur.exclude.push(e.id); cur.log.push(e.name + ': black'); continue; }
+    if (s[1] >= 2) continue;
+    // Réglage par défaut neutre : on cherche une valeur d'aperçu visible à 60 % de la plage.
+    const params = {};
+    for (const i of e.inputs) if (i.TYPE === 'float' && i.MAX != null) { const mn = i.MIN ?? 0, df = i.DEFAULT ?? 0; if (df === mn || df === 0) params[i.NAME] = +(mn + (i.MAX - mn) * 0.6).toFixed(4); }
+    const o = Object.keys(params).length ? run(e, 'o', params) : null;
+    if (o && o[1] >= 2 && o[0] >= 4) { cur.preview[e.id] = params; continue; }
+    // Deuxième essai : tous les curseurs à 70 % de leur plage (zooms, déformations dont le défaut est neutre sans être au minimum).
+    const wide = {};
+    for (const i of e.inputs) if (i.TYPE === 'float' && i.MAX != null) { const mn = i.MIN ?? 0; wide[i.NAME] = +(mn + (i.MAX - mn) * 0.7).toFixed(4); }
+    const o2 = Object.keys(wide).length ? run(e, 'w', wide) : null;
+    if (o2 && o2[1] >= 2 && o2[0] >= 4) { cur.preview[e.id] = wide; continue; }
+    const m = run(e, 'm', null, true);
+    if (m && m[1] >= 2) { cur.temporal.push(e.id); continue; }
+    cur.exclude.push(e.id); cur.log.push(e.name + ': no visible change');
+  }
+  for (const e of d.transitions) { const p = E.compileTransition(e); if (!p.ok) { cur.exclude.push(e.id); cur.log.push(e.name + ': compile'); } }
+  await fetch('/__save/curation.json', { method: 'POST', body: JSON.stringify(cur, null, 1) });
+  window.RESULT = cur;
+  document.getElementById('o').textContent = 'terminé — écartés ' + cur.exclude.length + ', aperçu réglé ' + Object.keys(cur.preview).length + ', temporels ' + cur.temporal.length + '\n' + cur.log.join('\n');
+})().catch(e => { document.getElementById('o').textContent = 'ERREUR ' + e.stack; window.RESULT = { fatal: String(e.stack) }; });
+</script>
