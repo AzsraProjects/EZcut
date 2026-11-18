@@ -34,7 +34,7 @@ export interface TransitionInstance {
   dur: number;
 }
 
-export interface Transform { scale: number; x: number; y: number; rot: number; }
+export interface Transform { scale: number; x: number; y: number; rot: number; /** Retournement horizontal, vertical. */ flipH?: boolean; flipV?: boolean; }
 
 export const BLEND_MODES = ['normal', 'screen', 'multiply', 'add', 'overlay'] as const;
 export type BlendMode = typeof BLEND_MODES[number];
@@ -101,6 +101,12 @@ export interface Clip {
  *  sound reçoit le son détaché d'une vidéo, les voix, les bruitages ; audio la musique. */
 export type TrackId = 'video' | 'audio' | 'sound' | 'overlay' | 'text';
 
+/** Repère posé sur la règle de la timeline. */
+export interface Marker { id: string; t: number; name: string; color: string; }
+export const MARKER_COLORS = ['#ff5d6c', '#ff9f43', '#ffd84d', '#22e3b6', '#4cc9f0', '#5f7cff', '#b388ff', '#9aa0ad'];
+/** État d'une piste : muette (son coupé), masquée (image non affichée), verrouillée (clips non modifiables). */
+export interface TrackState { muted?: boolean; hidden?: boolean; locked?: boolean; }
+
 export interface Project {
   version: 2;
   name: string;
@@ -117,14 +123,16 @@ export interface Project {
   overlay: Clip[];
   /** Titres. */
   text: Clip[];
+  markers: Marker[];
+  tracks: Partial<Record<TrackId, TrackState>>;
 }
 
 export const IMAGE_DURATION = 5;
-export const TEXT_DURATION = 3;
+export const TEXT_DURATION = 5;
 export const MIN_CLIP = 0.1;
 
 export function emptyProject(): Project {
-  return { version: 2, name: 'Projet sans titre', width: 1920, height: 1080, fps: 30, media: [], video: [], audio: [], sound: [], overlay: [], text: [] };
+  return { version: 2, name: 'Projet sans titre', width: 1920, height: 1080, fps: 30, media: [], video: [], audio: [], sound: [], overlay: [], text: [], markers: [], tracks: {} };
 }
 
 export function defaultText(): TextStyle {

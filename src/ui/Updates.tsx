@@ -66,9 +66,14 @@ export function Updates() {
             <h4>Raccourcis clavier</h4>
             <dl className="keys">
               <dt><kbd>Espace</kbd></dt><dd>Lecture, pause</dd>
-              <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Image précédente, suivante (avec <kbd>Maj</kbd> : dix images)</dd>
-              <dt><kbd>Début</kbd> <kbd>Fin</kbd></dt><dd>Début, fin du montage</dd>
-              <dt><kbd>S</kbd> ou <kbd>Ctrl</kbd> + <kbd>B</kbd></dt><dd>Couper le clip en deux à la tête de lecture</dd>
+              <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Image précédente, suivante (avec <kbd>Maj</kbd> : une seconde)</dd>
+              <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Coupe précédente, suivante (avec <kbd>Maj</kbd> : repère précédent, suivant)</dd>
+              <dt><kbd>Début</kbd> <kbd>Fin</kbd></dt><dd>Début, fin du montage (avec <kbd>Maj</kbd> : début, fin du clip)</dd>
+              <dt><kbd>S</kbd> ou <kbd>Ctrl</kbd> + <kbd>B</kbd></dt><dd>Couper à la tête de lecture : le clip sélectionné, ou toutes les pistes si rien n'est sélectionné</dd>
+              <dt><kbd>C</kbd> / <kbd>V</kbd></dt><dd>Outil lame (un clic coupe le clip), outil de sélection</dd>
+              <dt><kbd>M</kbd></dt><dd>Poser un repère à la tête de lecture (double-clic sur le repère : nom et couleur)</dd>
+              <dt><kbd>N</kbd></dt><dd>Activer ou couper l'aimantation (<kbd>Alt</kbd> la suspend pendant un geste)</dd>
+              <dt><kbd>Maj</kbd> + <kbd>Suppr</kbd></dt><dd>Supprimer le clip et refermer le vide</dd>
               <dt><kbd>Q</kbd> <kbd>W</kbd> ou <kbd>Alt</kbd> + <kbd>[</kbd> <kbd>]</kbd></dt><dd>Rogner le début, la fin du clip jusqu'à la tête de lecture</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd> / <kbd>V</kbd></dt><dd>Copier, coller les effets d'un clip</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Pivoter le clip de 90°</dd>
@@ -82,10 +87,15 @@ export function Updates() {
               <dt><kbd>Suppr</kbd></dt><dd>Supprimer la sélection</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></dt><dd>Annuler, rétablir</dd>
               <dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Enregistrer (avec <kbd>Maj</kbd> : enregistrer sous)</dd>
-              <dt><kbd>Ctrl</kbd> + <kbd>O</kbd></dt><dd>Ouvrir un projet</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>N</kbd> / <kbd>O</kbd> / <kbd>I</kbd> / <kbd>E</kbd></dt><dd>Nouveau projet, ouvrir, importer des médias, exporter</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd></dt><dd>Enregistrer l'image affichée en PNG</dd>
+              <dt><kbd>Alt</kbd> + <kbd>Entrée</kbd></dt><dd>Aperçu en plein écran</dd>
               <dt><kbd>Maj</kbd> + clic sur un média</dt><dd>Le poser par-dessus la vidéo</dd>
               <dt><kbd>Alt</kbd> + survol d'un effet</dt><dd>L'essayer en grand dans l'aperçu</dd>
               <dt><kbd>Ctrl</kbd> + molette sur la timeline</dt><dd>Zoomer, dézoomer autour du pointeur</dd>
+              <dt><kbd>Ctrl</kbd> + <kbd>=</kbd> / <kbd>-</kbd>, <kbd>Maj</kbd> + <kbd>Z</kbd></dt><dd>Zoomer, dézoomer la timeline ; afficher tout le montage</dd>
+              <dt>Bords d'une transition</dt><dd>Les tirer change sa durée</dd>
+              <dt>En-tête d'une piste</dt><dd>Couper son son, la masquer, la verrouiller</dd>
               <dt>Glisser, molette dans l'aperçu</dt><dd>Déplacer, redimensionner le clip sélectionné</dd>
             </dl>
             <h4>Nouveautés de cette version</h4>

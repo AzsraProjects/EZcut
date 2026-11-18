@@ -1,5 +1,5 @@
 /** Import de médias et génération de leurs vignettes. */
-import { addMedia, newId } from '../core/ops';
+import { addMedia, newId, replaceMedia } from '../core/ops';
 import type { Media } from '../core/types';
 import { ez, type ImportedFile } from '../desktop/api';
 import { useStore } from './store';
@@ -91,6 +91,21 @@ export async function importFiles(files: File[]): Promise<Media[]> {
     const kind = f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type.startsWith('image/') ? 'image' : null;
     return kind ? [{ path: 'web:' + f.name + ':' + f.size, url: URL.createObjectURL(f), name: f.name, kind, duration: 0, width: 0, height: 0, hasAudio: kind !== 'image' } as ImportedFile] : [];
   }));
+}
+
+/** Remplace le fichier d'un média (déplacé, renommé, ou nouvelle prise) : tous ses clips suivent. */
+export async function replaceMediaFile(mediaId: string): Promise<void> {
+  const st = useStore.getState();
+  if (!ez) { st.notify('Disponible seulement dans l\'application de bureau.'); return; }
+  const [f] = await ez.pickMedia();
+  if (!f) return;
+  const before = useStore.getState().project;
+  useStore.getState().apply(p => replaceMedia(p, mediaId, f));
+  const now = useStore.getState().project;
+  if (now === before) { st.notify('Impossible : un son ne peut pas remplacer une vidéo ou une image, ni l\'inverse.'); return; }
+  const m = now.media.find(x => x.id === mediaId);
+  if (m) void analyse(m);
+  st.notify(`Fichier remplacé par « ${f.name} ».`, true);
 }
 
 /** Après ouverture d'un projet : redonne accès aux fichiers et refait les vignettes. */

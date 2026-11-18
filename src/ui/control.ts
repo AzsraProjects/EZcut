@@ -1,7 +1,7 @@
 /** Lien de pilotage, côté interface : exécute les commandes envoyées par un assistant (voir electron/control.cjs et tools/mcp).
  *  Chaque commande passe par les mêmes opérations que les gestes de l'utilisateur, donc reste annulable par Ctrl+Z,
  *  et le projet qui en résulte est revalidé comme un fichier venu de l'extérieur. */
-import { addFx, addOverlay, addSound, addText, appendClip, detachAudio, findClip, moveClip, moveFree, patchClip, projectDuration, removeClip, removeFx, setTransition, spanWhole, splitAt, startsOf, TRACKS, trimClip } from '../core/ops';
+import { addMarker, patchMarker, removeMarker, setTrack, addFx, addOverlay, addSound, addText, appendClip, detachAudio, findClip, moveClip, moveFree, patchClip, projectDuration, removeClip, removeFx, setTransition, spanWhole, splitAt, startsOf, TRACKS, trimClip } from '../core/ops';
 import { parseProject } from '../core/project';
 import { defaultText, type Clip, type Project, type TrackId } from '../core/types';
 import { ez, type ControlRequest, type ImportedFile } from '../desktop/api';
@@ -9,6 +9,7 @@ import { catalog, defaultsOf, transitionDefaults, type CatEffect, type CatItem }
 import { player } from '../engine/player';
 import { exportProject, exportSize } from '../export/exporter';
 import { canReplaceProject, loadProject, newProject, serialise } from './actions';
+import { renderFrame } from './frame';
 import { registerMedia } from './media';
 import { useStore } from './store';
 import { TITLES } from './titles';
@@ -25,6 +26,8 @@ const isObj = (v: unknown): v is P => typeof v === 'object' && v !== null && !Ar
 function commit(next: Project): Project {
   const before = S().project;
   if (next === before) return before;
+  // Une piste verrouillée par l'utilisateur ne se modifie pas, même par l'assistant : il faut d'abord la déverrouiller.
+  for (const t of TRACKS) if (before.tracks[t]?.locked && next.tracks[t]?.locked && JSON.stringify(before[t]) !== JSON.stringify(next[t])) fail(`La piste ${t} est verrouillée : déverrouillez-la avec ezcut_track avant de la modifier.`);
   const clean = parseProject(JSON.stringify(next)) ?? fail('Modification refusée : le projet obtenu serait invalide.');
   const urls = new Map(before.media.map(m => [m.id, m.url]));
   clean.media.forEach(m => { m.url = urls.get(m.id) ?? ''; });
@@ -45,7 +48,8 @@ function describeClip(p: Project, track: TrackId, c: Clip, start: number) {
     ...(c.vfadeIn || c.vfadeOut ? { vfadeIn: c.vfadeIn, vfadeOut: c.vfadeOut } : {}),
     ...(c.still ? { still: true } : {}),
     ...(c.opacity !== 1 || c.blend !== 'normal' ? { opacity: c.opacity, blend: c.blend } : {}),
-    ...(c.transform.scale !== 1 || c.transform.x || c.transform.y || c.transform.rot ? { transform: c.transform } : {}),
+    ...(c.transform.scale !== 1 || c.transform.x || c.transform.y || c.transform.rot || c.transform.flipH || c.transform.flipV ? { transform: c.transform } : {}),
+    ...(c.off ? { disabled: true } : {}),
     ...(Object.keys(c.color).length ? { color: c.color } : {}),
   };
 }
@@ -56,6 +60,8 @@ function status() {
     playhead: +player.t.toFixed(3), playing: player.playing, selection: st.sel,
     media: p.media.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: +m.duration.toFixed(3), width: m.width, height: m.height, hasAudio: m.hasAudio, path: m.path, missing: !m.url })),
     tracks: Object.fromEntries(TRACKS.map(t => { const s = startsOf(p, t); return [t, p[t].map((c, i) => describeClip(p, t, c, s[i]))]; })),
+    markers: p.markers.map(m => ({ id: m.id, time: +m.t.toFixed(3), name: m.name, color: m.color })),
+    trackStates: p.tracks,
     notes: 'Pistes : video (principale, clips à la suite, transitions) ; overlay (par-dessus), text (titres), sound (son détaché, voix, bruitages) et audio (musique) sont libres : chaque clip a sa position. Temps en secondes. Positions : fraction du cadre, x vers la droite, y vers le haut, 0 = centre.',
   };
 }
@@ -79,13 +85,7 @@ async function screenshot(p: P) {
   if (!total) fail('Le projet est vide : rien à montrer.');
   const t = Math.max(0, Math.min(total - 1e-3, optNum(p.time, 'time') ?? player.t));
   const { width, height } = exportSize(project, Math.max(180, Math.min(1080, Math.round(optNum(p.size, 'size') ?? 540))));
-  const buf = new Uint8Array(width * height * 4);
-  player.pause(); player.exporting = true;
-  try { await player.renderExact(project, t, width, height, buf); } finally { player.resetExportState(width, height); player.exporting = false; player.seek(player.t); }
-  const c = document.createElement('canvas'); c.width = width; c.height = height;
-  const g = c.getContext('2d')!, img = g.createImageData(width, height), row = width * 4;
-  for (let y = 0; y < height; y++) img.data.set(buf.subarray((height - 1 - y) * row, (height - y) * row), y * row); // lignes de bas en haut → de haut en bas
-  g.putImageData(img, 0, 0);
+  const c = await renderFrame(project, t, width, height);
   return { time: +t.toFixed(3), width, height, image: c.toDataURL('image/jpeg', 0.82).split(',')[1], mimeType: 'image/jpeg' };
 }
 
@@ -204,6 +204,24 @@ const handlers: Record<string, (p: P) => unknown | Promise<unknown>> = {
     if (f.track !== 'video' || !next) fail('Une transition se pose sur un clip de la piste video qui a un clip après lui.');
     commit(setTransition(before, f.clip.id, { effectId: it.id, params: { ...transitionDefaults(it), ...(isObj(p.params) ? p.params as Record<string, number[]> : {}) }, dur: optNum(p.duration, 'duration') ?? Math.min(1, f.clip.dur, next.dur) }));
     return describeClip(S().project, 'video', findClip(S().project, f.clip.id)!.clip, f.start);
+  },
+  marker: p => {
+    const project = S().project, action = typeof p.action === 'string' ? p.action : 'add';
+    const patch = { ...(typeof p.name === 'string' ? { name: p.name } : {}), ...(typeof p.color === 'string' ? { color: p.color } : {}), ...(p.time !== undefined ? { t: num(p.time, 'time') } : {}) };
+    if (action === 'clear') commit(removeMarker(project, null));
+    else if (action === 'add') { const r = addMarker(project, optNum(p.time, 'time') ?? player.t); commit(patchMarker(r.project, r.id, patch)); }
+    else {
+      const id = str(p.id, 'id');
+      if (!project.markers.some(m => m.id === id)) fail('Repère introuvable : ses identifiants sont donnés par ezcut_status.');
+      commit(action === 'remove' ? removeMarker(project, id) : patchMarker(project, id, patch));
+    }
+    return status().markers;
+  },
+  track: p => {
+    const track = (TRACKS as unknown[]).includes(p.track) ? p.track as TrackId : fail('Paramètre « track » : video, overlay, text, sound ou audio.');
+    const patch = Object.fromEntries((['muted', 'hidden', 'locked'] as const).filter(k => typeof p[k] === 'boolean').map(k => [k, p[k]]));
+    commit(setTrack(S().project, track, patch));
+    return status().trackStates;
   },
   projectSettings: p => {
     commit({ ...S().project, ...(typeof p.name === 'string' ? { name: p.name } : {}), ...(p.width !== undefined ? { width: num(p.width, 'width') } : {}), ...(p.height !== undefined ? { height: num(p.height, 'height') } : {}), ...(p.fps !== undefined ? { fps: num(p.fps, 'fps') } : {}) });

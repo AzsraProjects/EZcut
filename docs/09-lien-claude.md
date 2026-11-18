@@ -40,6 +40,7 @@ flowchart LR
 | `ezcut_add_clip`, `ezcut_add_title` | Poser un média (piste principale ou par-dessus), un titre |
 | `ezcut_edit_clip`, `ezcut_split`, `ezcut_remove_clip` | Rogner, déplacer, régler, couper, retirer |
 | `ezcut_apply_effect`, `ezcut_edit_effect`, `ezcut_set_transition` | Effets, filtres, transitions |
+| `ezcut_marker`, `ezcut_track` | Repères de la timeline ; piste muette, masquée, verrouillée |
 | `ezcut_project`, `ezcut_transport` | Format du projet ; tête de lecture, lecture |
 | `ezcut_screenshot` | Image du montage tel qu'il sera exporté |
 | `ezcut_undo`, `ezcut_redo` | Annuler, rétablir |

@@ -29,6 +29,18 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Détacher le son d'une vidéo sur une piste Son à part, où il se règle, se coupe et se déplace seul ; la musique a sa propre piste, et s'y place librement.
 - Fondus à la souris : une poignée dans chaque coin d'un clip règle le fondu de l'image (ou du son, sur les pistes de son).
 - Rogner le début d'un clip suit la souris : le bord gauche se déplace, et la bande d'images défile dessous.
+- Repères sur la règle de la timeline : touche M pour en poser un, double-clic pour lui donner un nom et une couleur, Maj + ↑ / ↓ pour aller de l'un à l'autre.
+- Outil lame (touche C) : chaque clic sur un clip le coupe à cet endroit. Sans sélection, couper à la tête de lecture coupe toutes les pistes.
+- Aimantation : un clip qu'on déplace ou qu'on rogne s'accroche aux coupes, aux repères et à la tête de lecture, avec une ligne-guide (touche N ; Alt la suspend).
+- Pistes : couper le son d'une piste entière, la masquer, la verrouiller, depuis son en-tête.
+- Refermer un vide sur une piste (clic droit dans le vide), ou supprimer un clip en refermant le vide (Maj + Suppr).
+- Transitions : tirer un bord pour changer la durée ; « Appliquer à toutes les coupes » d'un clic.
+- Retournement horizontal et vertical, et quart de tour, dans l'inspecteur.
+- Enregistrer l'image affichée dans l'aperçu en PNG, à la résolution du projet.
+- Favoris dans la banque d'effets, de filtres et de transitions.
+- Un média dont le fichier a été déplacé est signalé « Introuvable » et se retrouve d'un clic droit ; un fichier peut aussi être remplacé par un autre, ses clips suivent.
+- Raccourcis supplémentaires : ↑ / ↓ (coupe précédente, suivante), Maj + ← / → (une seconde), Maj + Début / Fin (bords du clip), Ctrl + = / - et Maj + Z (zoom), Ctrl + N / I / E, Alt + Entrée (plein écran).
+- Un titre dure 5 secondes par défaut.
 - Disposition libre : chaque panneau se redimensionne, se masque, et la bibliothèque et l'inspecteur peuvent échanger de côté.
 - Enregistrer et rouvrir un projet ; sauvegarde automatique toutes les 20 secondes, proposée à la restauration après une fermeture inattendue.
 - Exporter en MP4, H.264 ou H.265, de 720p à 4K, avec l'encodeur de la carte graphique quand il existe (NVIDIA, Intel, AMD).
@@ -46,7 +58,8 @@ Première version d'EZcut : un éditeur complet pour monter, habiller et exporte
 - Pas de réglage de vitesse ni d'inversion.
 - Les réglages des effets et transitions d'origine communautaire portent leur nom anglais.
 - L'export avance à peu près à la vitesse de lecture ; l'image est positionnée par recherche dans la vidéo source, et peut être décalée d'une position sur un fichier à cadence variable (téléphone).
-- Le volume d'un clip ne peut pas dépasser 100 %.
+- Le volume d'un clip ne peut pas dépasser 100 %, et il n'y a pas de réglage de balance gauche-droite.
+- Un seul clip peut être sélectionné à la fois : pas de sélection multiple ni de groupe.
 - L'installateur n'est pas signé : Windows affiche un avertissement à l'installation.
 - La mise à jour automatique n'a pas encore pu être essayée, faute de version publiée.
 - Les panneaux ne se détachent pas en fenêtres séparées.

@@ -453,6 +453,18 @@ app.whenReady().then(() => {
   handle('media:import', async (_e, paths) => { const out = await probeAll(paths); remember(out.map(f => f.path)); return out; });
   handle('media:reveal', (_e, p) => { if (typeof p === 'string' && allowed.has(p) && fs.existsSync(p)) shell.showItemInFolder(p); });
   handle('media:relink', (e, paths) => relink(winOf(e), paths));
+  // Capture de l'aperçu : l'interface fournit l'image, l'emplacement vient toujours du dialogue.
+  handle('snapshot:save', async (e, bytes, name) => {
+    const buf = bytes instanceof Uint8Array ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
+    if (!buf || buf.length < 8 || buf.length > 96 * 1024 * 1024 || buf.readUInt32BE(0) !== 0x89504e47) return null; // PNG uniquement
+    const safe = String(name || 'EZcut').slice(0, 120).replace(/[\\/:*?"<>|]/g, '_');
+    const r = await dialog.showSaveDialog(winOf(e), { title: 'Enregistrer l\'image', defaultPath: path.join(app.getPath('pictures'), safe + '.png'), filters: [{ name: 'Image PNG', extensions: ['png'] }] });
+    if (r.canceled || !r.filePath) return null;
+    const file = /\.png$/i.test(r.filePath) ? r.filePath : r.filePath + '.png';
+    fs.writeFileSync(file, buf);
+    log.info('capture', 'image enregistrée', { octets: buf.length });
+    return file;
+  });
   handle('project:new', () => { projectPath = null; allowed.clear(); });
   // Avant de remplacer un projet modifié (nouveau, ouvrir, restaurer) : enregistrer, abandonner ou renoncer.
   handle('project:confirm-discard', e => ['save', 'discard', 'cancel'][dialog.showMessageBoxSync(winOf(e), { type: 'question', buttons: ['Enregistrer', 'Ne pas enregistrer', 'Annuler'], defaultId: 0, cancelId: 2, title: 'EZcut', message: 'Enregistrer les modifications du projet en cours ?', detail: 'Sans enregistrement, elles seront perdues.' })]);

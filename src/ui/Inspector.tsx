@@ -4,6 +4,7 @@ import { catalog, humanize, type CatEffect, type CatTransition } from '../effect
 import type { IsfInput } from '../engine/gl';
 import { FONTS } from '../engine/text';
 import { Icon } from './Icon';
+import { applyTransitionEverywhere, rotateClip } from './menus';
 import { useStore } from './store';
 import { timecode } from './time';
 
@@ -99,6 +100,14 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
       <Slider label="Horizontal" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.x * 100} onChange={v => edit(c => { c.transform.x = v / 100; })} />
       <Slider label="Vertical" min={-100} max={100} step={0.5} digits={1} unit=" %" value={tf.y * 100} onChange={v => edit(c => { c.transform.y = v / 100; })} />
       <Slider label="Rotation" min={-180} max={180} step={1} digits={0} unit="°" value={tf.rot} onChange={v => edit(c => { c.transform.rot = v; })} />
+      {!isText && <div className="row"><span>Quart de tour</span><div className="pairbtn">
+        <button className="btn sm" title="Pivoter de 90° vers la gauche (Ctrl+Alt+←)" onClick={() => rotateClip(clip.id, 90)}>↺ Gauche</button>
+        <button className="btn sm" title="Pivoter de 90° vers la droite (Ctrl+Alt+→)" onClick={() => rotateClip(clip.id, -90)}>↻ Droite</button>
+      </div></div>}
+      {!isText && <div className="row"><span>Retourner</span><div className="seg">
+        <button aria-pressed={!!tf.flipH} title="Miroir gauche-droite" onClick={() => st().apply(p => patchClip(p, clip.id, c => { if (c.transform.flipH) delete c.transform.flipH; else c.transform.flipH = true; }))}>↔ Horizontal</button>
+        <button aria-pressed={!!tf.flipV} title="Miroir haut-bas" onClick={() => st().apply(p => patchClip(p, clip.id, c => { if (c.transform.flipV) delete c.transform.flipV; else c.transform.flipV = true; }))}>↕ Vertical</button>
+      </div></div>}
     </div>}
     {!isAudio && <div className="sec">
       <h3>Fondu de l'image</h3>
@@ -146,13 +155,14 @@ function ClipPanel({ clip, track, project }: { clip: Clip; track: TrackId; proje
 }
 
 function TransitionPanel({ clip }: { clip: Clip }) {
+  const cuts = useStore(s => s.project.video.length - 1);
   const tr = clip.transition!, def = catalog.byId.get(tr.effectId) as CatTransition | undefined;
   const edit = (fn: (c: Clip) => void) => st().apply(p => patchClip(p, clip.id, fn), false);
   return <>
     <div className="ihead"><div><b>{def?.label ?? tr.effectId}</b><span>Transition{def ? ` · ${def.by} · ${def.license}` : ''}</span></div></div>
     <div className="sec">
       <h3>Réglages</h3>
-      <Slider label="Durée" min={0.2} max={3} step={0.1} digits={1} unit=" s" value={tr.dur} onChange={v => edit(c => { if (c.transition) c.transition.dur = v; })} />
+      <Slider label="Durée" min={0.2} max={Math.max(3, Math.ceil(tr.dur))} step={0.1} digits={1} unit=" s" value={tr.dur} onChange={v => edit(c => { if (c.transition) c.transition.dur = v; })} />
       {def && def.params.some(u => ['float', 'int', 'bool'].includes(u.type)) && <details className="adv"><summary>Réglages avancés</summary>{def.params.map(u => {
         const v = tr.params[u.name] ?? u.def;
         if (u.type === 'float' || u.type === 'int') {
@@ -162,7 +172,10 @@ function TransitionPanel({ clip }: { clip: Clip }) {
         if (u.type === 'bool') return <label className="row" key={u.name}><span>{humanize(u.name)}</span><input type="checkbox" checked={!!v[0]} onChange={e => { st().checkpoint(); edit(c => { if (c.transition) c.transition.params[u.name] = [e.target.checked ? 1 : 0]; }); }} /><span /></label>;
         return null;
       })}</details>}
-      <div className="actions"><button className="btn sm" onClick={() => { st().apply(p => setTransition(p, clip.id, null)); st().select(null); }}><Icon name="trash" />Retirer</button></div>
+      <div className="actions">
+        <button className="btn sm" title="Poser cette transition, avec ces réglages, sur toutes les coupes de la piste Vidéo" disabled={cuts < 2} onClick={applyTransitionEverywhere(clip.id)}>Appliquer à toutes les coupes</button>
+        <button className="btn sm" onClick={() => { st().apply(p => setTransition(p, clip.id, null)); st().select(null); }}><Icon name="trash" />Retirer</button>
+      </div>
     </div>
   </>;
 }

@@ -8,7 +8,7 @@ import { TITLES, type TitlePreset } from './titles';
 import { openMenu } from './ContextMenu';
 import { Icon } from './Icon';
 import { menuForMedia } from './menus';
-import { importWithDialog } from './media';
+import { importWithDialog, replaceMediaFile } from './media';
 import { useStore, type Tab } from './store';
 import { timecode } from './time';
 
@@ -19,6 +19,8 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'filters', label: 'Filtres', icon: 'drop' },
   { id: 'transitions', label: 'Transitions', icon: 'trans' },
 ];
+/** Catégorie des favoris de l'utilisateur. */
+const FAVS = 'Favoris';
 const FOOT: Record<string, string> = {
   effects: 'Un effet anime ou déforme l\'image.',
   filters: 'Un filtre change les couleurs et l\'ambiance.',
@@ -28,6 +30,8 @@ const FOOT: Record<string, string> = {
 /** Tuile d'effet, de filtre ou de transition. Sa vignette est calculée par le moteur quand elle devient visible. */
 const FxTile = memo(function FxTile({ item, observe }: { item: CatItem; observe: (el: HTMLElement | null, item: CatItem) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const fav = useStore(s => s.favs.includes(item.id));
+  const toggleFav = () => useStore.getState().toggleFav(item.id);
   const [live, setLive] = useState(false);
   const enter = () => { const ctx = canvas.current?.getContext('2d'); if (ctx) { player.hover = { item, ctx }; setLive(true); } };
   const leave = () => {
@@ -36,11 +40,12 @@ const FxTile = memo(function FxTile({ item, observe }: { item: CatItem; observe:
     const ctx = canvas.current?.getContext('2d'); if (ctx) player.requestThumb(item, ctx);
   };
   return (
-    <button className={live ? 'tile live' : 'tile'} ref={el => observe(el, item)} title={`${('desc' in item && item.desc) || item.label}\n${item.by} · licence ${item.license}`}
+    <button className={`tile${live ? ' live' : ''}${fav ? ' fav' : ''}`} ref={el => observe(el, item)} title={`${('desc' in item && item.desc) || item.label}\n${item.by} · licence ${item.license}`}
       draggable onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-item', item.id); e.dataTransfer.effectAllowed = 'copy'; }}
       onPointerEnter={enter} onPointerLeave={leave} onFocus={enter} onBlur={leave} onClick={() => applyItem(item)}
-      onContextMenu={e => openMenu(e, [{ label: item.kind === 'transition' ? 'Poser sur la coupe la plus proche' : 'Appliquer au clip sélectionné', action: () => applyItem(item) }])}>
-      <span className="thumb"><canvas ref={canvas} width={TW} height={TH} /><span className="tag">Aperçu</span><span className="add"><Icon name="plus" /></span></span>
+      onContextMenu={e => openMenu(e, [{ label: item.kind === 'transition' ? 'Poser sur la coupe la plus proche' : 'Appliquer au clip sélectionné', action: () => applyItem(item) }, { label: fav ? 'Retirer des favoris' : 'Ajouter aux favoris', action: toggleFav }])}>
+      <span className="thumb"><canvas ref={canvas} width={TW} height={TH} /><span className="tag">Aperçu</span><span className="add"><Icon name="plus" /></span>
+        <span className="star" title={fav ? 'Retirer des favoris' : 'Ajouter aux favoris'} onClick={e => { e.stopPropagation(); toggleFav(); }}><Icon name="star" fill={fav} /></span></span>
       <span className="tname">{item.label}</span>
     </button>
   );
@@ -75,12 +80,13 @@ function MediaTile({ m }: { m: Media }) {
   const poster = useStore(s => s.thumbs[m.id]?.poster);
   const fps = useStore(s => s.project.fps);
   return (
-    <button className="tile" title="Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture." draggable
+    <button className={m.url ? 'tile' : 'tile missing'} title={m.url ? 'Clic : ajouter à la suite. Maj + clic : poser en incrustation à la tête de lecture.' : 'Fichier introuvable : cliquez pour le retrouver'} draggable
       onDragStart={e => { e.dataTransfer.setData('application/x-ezcut-media', m.id); e.dataTransfer.effectAllowed = 'copy'; }}
-      onClick={e => addToTimeline(m.id, e.shiftKey)} onContextMenu={e => openMenu(e, menuForMedia(m.id))}>
+      onClick={e => (m.url ? addToTimeline(m.id, e.shiftKey) : void replaceMediaFile(m.id))} onContextMenu={e => openMenu(e, menuForMedia(m.id))}>
       <span className="thumb">
         {poster ? <img src={poster} alt="" draggable={false} /> : <span className="ph-ico"><Icon name={m.kind === 'audio' ? 'music' : m.kind === 'image' ? 'image' : 'film'} /></span>}
         {m.kind !== 'image' && <span className="dur">{timecode(m.duration, fps)}</span>}
+        {!m.url && <span className="lost">Introuvable</span>}
         <span className="add"><Icon name="plus" /></span>
       </span>
       <span className="tname">{m.name}</span>
@@ -95,6 +101,7 @@ export function Library() {
   const selId = useStore(s => s.sel?.kind === 'clip' ? s.sel.id : null);
   const clipCount = useStore(s => s.project.video.length);
   const epoch = useStore(s => s.thumbEpoch);
+  const favs = useStore(s => s.favs);
   const [cat, setCat] = useState('Tous');
   const [q, setQ] = useState('');
   const scroller = useRef<HTMLDivElement>(null);
@@ -113,8 +120,9 @@ export function Library() {
     const s = q.trim().toLowerCase();
     // La recherche porte sur le nom affiché, le nom d'origine, la catégorie, la description et l'auteur.
     const hay = (it: CatItem) => [it.label, it.name, it.by, ...it.cat, 'desc' in it ? it.desc : ''].join(' ').toLowerCase();
-    return list.filter(it => (cat === 'Tous' || it.cat.includes(cat)) && (!s || hay(it).includes(s)));
-  }, [list, cat, q]);
+    return list.filter(it => (cat === 'Tous' || (cat === FAVS ? favs.includes(it.id) : it.cat.includes(cat))) && (!s || hay(it).includes(s)));
+  }, [list, cat, q, favs]);
+  const favCount = useMemo(() => list.filter(it => favs.includes(it.id)).length, [list, favs]);
 
   // Les vignettes ne sont calculées que pour les tuiles visibles.
   const draw = (el: HTMLElement, item: CatItem) => { const ctx = el.querySelector('canvas')?.getContext('2d'); if (ctx) player.requestThumb(item, ctx); };
@@ -159,6 +167,7 @@ export function Library() {
         <div className="libbody">
           <aside className="cats">
             <button aria-pressed={cat === 'Tous'} onClick={() => setCat('Tous')}><span>Tous</span><small>{list.length}</small></button>
+            <button aria-pressed={cat === FAVS} title="Vos favoris : cliquez sur l'étoile d'une vignette pour l'y ajouter" onClick={() => setCat(FAVS)}><span>★ Favoris</span><small>{favCount}</small></button>
             {cats.map(([c, n]) => <button key={c} aria-pressed={cat === c} onClick={() => setCat(c)}><span>{c}</span><small>{n}</small></button>)}
           </aside>
           <div className="libmain">
@@ -168,6 +177,7 @@ export function Library() {
             </div>
             <div className="tiles" ref={scroller}>
               {!ready ? <div className="empty">Chargement de la banque…</div>
+                : shown.length === 0 && cat === FAVS && !q.trim() ? <div className="empty"><Icon name="star" /><b>Aucun favori pour l'instant</b><span>Cliquez sur l'étoile d'une vignette pour la retrouver ici.</span></div>
                 : shown.length === 0 ? <div className="empty"><b>Aucun résultat{q.trim() ? ` pour « ${q.trim()} »` : ''}{cat !== 'Tous' ? ` dans ${cat}` : ''}.</b>{cat !== 'Tous' && q.trim() && <button className="btn sm" onClick={() => setCat('Tous')}>Chercher dans tout</button>}</div>
                 : shown.map(it => <FxTile key={it.id} item={it} observe={observe} />)}
             </div>

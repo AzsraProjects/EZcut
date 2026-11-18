@@ -5,7 +5,8 @@ import { ez } from '../desktop/api';
 import { catalog, defaultsOf, loadCatalog, transitionDefaults } from '../effects/catalog';
 import { player } from '../engine/player';
 import { exportProject } from '../export/exporter';
-import { deleteSelection, loadProject, newProject, openProject, saveProject, serialise, splitAtPlayhead } from './actions';
+import { addMarkerAtPlayhead, deleteSelection, jumpClipEdge, jumpCut, jumpMarker, loadProject, newProject, openProject, saveProject, serialise, snapshot, splitAtPlayhead, zoomTimeline } from './actions';
+import { MarkerDialog } from './MarkerDialog';
 import { ExportDialog } from './ExportDialog';
 import { Updates } from './Updates';
 import { ClaudeLink } from './ClaudeLink';
@@ -16,7 +17,7 @@ import { captureErrors, log } from './log';
 import { Icon } from './Icon';
 import { Inspector } from './Inspector';
 import { Library } from './Library';
-import { importFiles, registerMedia } from './media';
+import { importFiles, importWithDialog, registerMedia } from './media';
 import { Splitter } from './Splitter';
 import { DEFAULT_LAYOUT, useStore } from './store';
 import { emitTime } from './time';
@@ -97,12 +98,21 @@ export function App() {
     const typing = () => { const a = document.activeElement as HTMLInputElement | null; return !!a && (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || (a.tagName === 'INPUT' && !['range', 'checkbox', 'color'].includes(a.type))); };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Alt') { player.alt = true; if (player.hover) e.preventDefault(); return; }
-      if (st().exportOpen) return; // pendant un export, le projet ne doit pas changer
+      if (st().exportOpen || st().markerEdit) return; // pendant un export, le projet ne doit pas changer ; un dialogue ouvert garde le clavier
       const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
       if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? st().redo() : st().undo(); return; }
       if (mod && k === 'y') { e.preventDefault(); st().redo(); return; }
+      if (mod && e.altKey && k === 's' && !typing()) { e.preventDefault(); if (!e.repeat) void snapshot(); return; }
       if (mod && k === 's') { e.preventDefault(); void saveProject(e.shiftKey); return; }
       if (mod && k === 'o') { e.preventDefault(); void openProject(); return; }
+      if (mod && !e.altKey && !typing()) {
+        if (k === 'n') { e.preventDefault(); void newProject(); return; }
+        if (k === 'i') { e.preventDefault(); void importWithDialog().then(m => { if (m.length) st().setTab('media'); }); return; }
+        if (k === 'e') { e.preventDefault(); player.pause(); st().set({ exportOpen: true }); return; }
+        if (k === '=' || k === '+') { e.preventDefault(); zoomTimeline(1.25); return; }
+        if (k === '-') { e.preventDefault(); zoomTimeline(0.8); return; }
+      }
+      if (e.altKey && !mod && e.key === 'Enter') { e.preventDefault(); dispatchEvent(new Event('ezcut:fullscreen')); return; }
       if (mod && e.altKey && !typing()) {
         const s = st().sel;
         if (k === 'c') { e.preventDefault(); copyEffects(); return; }
@@ -121,20 +131,27 @@ export function App() {
       if (e.altKey && k === 'f' && !typing()) { e.preventDefault(); freezeFrame(); return; }
       if (e.altKey && !mod && !typing() && (e.code === 'BracketLeft' || e.code === 'BracketRight')) { e.preventDefault(); trimToPlayhead(e.code === 'BracketLeft' ? 'start' : 'end'); return; }
       if (mod && e.altKey && k === 'd' && !typing()) { e.preventDefault(); detachSound(); return; }
-      if (typing() || mod) return;
+      if (typing() || mod || e.altKey) return;
       const active = document.activeElement as HTMLElement | null, onRange = (active as HTMLInputElement | null)?.type === 'range';
       if (e.code === 'Space') {
         if (active?.tagName === 'BUTTON' && active.matches(':focus-visible')) return; // au clavier, Espace active le bouton ciblé
         e.preventDefault(); if (onRange) active?.blur(); player.toggle();
       }
-      else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && onRange) return; // les flèches règlent le curseur ciblé
+      else if (e.key.startsWith('Arrow') && onRange) return; // les flèches règlent le curseur ciblé
       else if (k === 's') splitAtPlayhead();
+      else if (k === 'c') { st().set({ tool: 'razor' }); st().notify('Outil lame : cliquez sur un clip pour le couper. Échap ou V pour revenir à la sélection.'); }
+      else if (k === 'v' || e.key === 'Escape') st().set({ tool: 'select' });
+      else if (k === 'n') { const on = !st().snap; st().set({ snap: on }); st().notify(on ? 'Aimantation activée.' : 'Aimantation désactivée.'); }
+      else if (k === 'm') addMarkerAtPlayhead();
+      else if (k === 'z' && e.shiftKey) dispatchEvent(new Event('ezcut:fit'));
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); const dir = e.key === 'ArrowUp' ? -1 : 1; e.shiftKey ? jumpMarker(dir) : jumpCut(dir); }
       else if (k === 'q') trimToPlayhead('start');
       else if (k === 'w') trimToPlayhead('end');
-      else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection();
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); player.pause(); player.seek(player.t + (e.key === 'ArrowLeft' ? -1 : 1) / st().project.fps * (e.shiftKey ? 10 : 1)); }
-      else if (e.key === 'Home') player.seek(0);
-      else if (e.key === 'End') player.seek(1e9);
+      else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection(e.shiftKey);
+      // Une image à la fois ; avec Maj, une seconde.
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); player.pause(); player.seek(player.t + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 1 / st().project.fps)); }
+      else if (e.key === 'Home') e.shiftKey ? jumpClipEdge('start') : player.seek(0);
+      else if (e.key === 'End') e.shiftKey ? jumpClipEdge('end') : player.seek(1e9);
     };
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') { player.alt = false; e.preventDefault(); } };
     const onBlur = () => { player.alt = false; };
@@ -173,7 +190,7 @@ export function App() {
       <header className="top">
         <span className="logo"><i><Icon name="play" fill /></i>EZcut</span>
         <span className="tb">
-          <button className="ib" title="Nouveau projet" aria-label="Nouveau projet" onClick={() => void newProject()}><Icon name="file" /></button>
+          <button className="ib" title="Nouveau projet (Ctrl+N)" aria-label="Nouveau projet" onClick={() => void newProject()}><Icon name="file" /></button>
           <button className="ib" title="Ouvrir un projet (Ctrl+O)" aria-label="Ouvrir un projet" onClick={() => void openProject()}><Icon name="folder" /></button>
           <button className="ib" title="Enregistrer (Ctrl+S) — Maj + clic : enregistrer sous" aria-label="Enregistrer" onClick={e => void saveProject(e.shiftKey)}><Icon name="save" /></button>
           <span className="sep" />
@@ -208,6 +225,7 @@ export function App() {
         <Timeline height={Math.min(L.tlH, Math.max(150, innerHeight - 260))} />
       </>}
       <ContextMenu />
+      <MarkerDialog />
       <Updates />
       {linkOpen && <ClaudeLink onClose={() => setLinkOpen(false)} />}
       {exportOpen && <ExportDialog />}

@@ -23,6 +23,8 @@ Déjà en place : timeline par glisser-déposer, interface progressive, biblioth
 | 9 | Multicaméra | Dépend de la synchronisation audio (rang 4) | Grande |
 | 10 | Suivi de mouvement | Le plus coûteux ; rien d'autre n'en dépend | Grande |
 
+Petits manques relevés en comparant EZcut au guide d'utilisation de Filmora (2026-11-18), à traiter avant ou avec les rangs ci-dessus : sélection multiple et groupes de clips ; volume au-delà de 100 % et balance gauche-droite (demande de faire passer le son de l'aperçu par Web Audio) ; préférences (durées par défaut des titres, images et transitions) ; navigation complète de la timeline au clavier. Le reste de la liste est fait : repères, outil lame, aimantation, pistes muettes, masquées ou verrouillées, fermeture des vides, retournements, gestes sur les transitions, capture d'image, favoris, média à retrouver.
+
 Non planifié faute de contenu : musiques et modèles intégrés, qui demandent une source de contenus sous licence claire.
 
 ## Vue d'ensemble

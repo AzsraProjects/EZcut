@@ -23,7 +23,10 @@ export function audioPlan(p: Project): AudioSegment[][] {
     }
     return out.some(s => s.path) ? out : [];
   };
-  return [p.video.map(seg), free(p.audio), free(p.overlay), free(p.sound)];
+  // Une piste muette ne produit aucun son ; la piste principale garde ses durées, en silence.
+  // Une incrustation masquée n'est pas lue du tout à l'aperçu : elle se tait aussi à l'export.
+  const off = (t: 'video' | 'audio' | 'overlay' | 'sound') => !!p.tracks[t]?.muted || (t === 'overlay' && !!p.tracks.overlay?.hidden);
+  return [p.video.map(c => (off('video') ? { ...seg(c), path: null } : seg(c))), off('audio') ? [] : free(p.audio), off('overlay') ? [] : free(p.overlay), off('sound') ? [] : free(p.sound)];
 }
 
 export function exportSize(p: Project, height: number): { width: number; height: number } {

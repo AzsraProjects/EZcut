@@ -102,9 +102,9 @@ export class Engine {
     this.copy = this.link(vs, '#version 300 es\nprecision highp float;in vec2 v;uniform sampler2D t;uniform float gain;out vec4 o;void main(){o=vec4(texture(t,v).rgb*gain,1.);}');
     // Place l'image source dans le cadre du projet : ajustement sans déformation, puis échelle, position, rotation.
     this.fit = this.link(vs, `#version 300 es
-precision highp float;in vec2 v;uniform sampler2D t;uniform vec2 box;uniform vec2 off;uniform float scale,rot,aspect,keepAlpha;out vec4 o;
+precision highp float;in vec2 v;uniform sampler2D t;uniform vec2 box;uniform vec2 off;uniform vec2 flip;uniform float scale,rot,aspect,keepAlpha;out vec4 o;
 void main(){vec2 p=(v-.5)*vec2(aspect,1.)-off*vec2(aspect,1.);float c=cos(rot),s=sin(rot);p=vec2(c*p.x+s*p.y,-s*p.x+c*p.y)/scale;
-vec2 uv=p/box+.5;bool outside=uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.;vec4 px=texture(t,uv);
+vec2 uv=p/box+.5;uv=mix(uv,1.-uv,flip);bool outside=uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.;vec4 px=texture(t,uv);
 o=keepAlpha>.5?(outside?vec4(0.):px):(outside?vec4(0.,0.,0.,1.):vec4(px.rgb,1.));}`);
     // Pose une couche sur une image : la couverture vient du masque (alpha), la couleur de la couche, selon un mode de fusion.
     this.mix = this.link(vs, `#version 300 es
@@ -321,6 +321,7 @@ o=vec4(mix(b,r,a),1.);}`);
     if (natural) gl.uniform2f(this.u(p, 'box'), srcW / h, srcH / h);
     else gl.uniform2f(this.u(p, 'box'), sa > A ? A : sa, sa > A ? A / sa : 1);
     gl.uniform2f(this.u(p, 'off'), tf.x, tf.y);
+    gl.uniform2f(this.u(p, 'flip'), tf.flipH ? 1 : 0, tf.flipV ? 1 : 0);
     gl.uniform1f(this.u(p, 'scale'), Math.max(0.01, tf.scale));
     gl.uniform1f(this.u(p, 'rot'), tf.rot * Math.PI / 180);
     gl.uniform1f(this.u(p, 'aspect'), A);

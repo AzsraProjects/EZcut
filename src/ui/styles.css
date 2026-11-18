@@ -3,7 +3,7 @@
   --chrome:#101216; --panel:#16181d; --panel2:#1c1f26; --raised:#262a33; --line:#2b2f3a;
   --fg:#f1f3f7; --muted:#969cab; --dim:#80869a;
   --accent:#22e3b6; --accent-soft:rgba(34,227,182,.14); --on-accent:#03241c;
-  --video:#5f7cff; --audio:#21b98f; --sound:#d99a2b; --title:#e06bc8; --danger:#ff5d6c; --stage:#050506; --scrim:rgba(0,0,0,.6);
+  --video:#5f7cff; --audio:#21b98f; --sound:#d99a2b; --title:#e06bc8; --danger:#ff5d6c; --stage:#050506; --scrim:rgba(0,0,0,.6); --guide:#ffd84d;
   --f-ui:"Segoe UI Variable Text","Segoe UI",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
   --f-mono:"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
   --r1:6px; --r2:10px;
@@ -13,7 +13,7 @@
   --chrome:#eef0f4; --panel:#ffffff; --panel2:#f5f6f9; --raised:#e8ebf0; --line:#d6dae2;
   --fg:#14161b; --muted:#5a6070; --dim:#666c7c;
   --accent:#047857; --accent-soft:rgba(4,120,87,.10); --on-accent:#ffffff;
-  --video:#4a68f0; --audio:#0f9f78; --sound:#b27410; --title:#b944a8; --danger:#d93a4a; --stage:#1a1c21; --scrim:rgba(20,22,27,.45);
+  --video:#4a68f0; --audio:#0f9f78; --sound:#b27410; --title:#b944a8; --danger:#d93a4a; --stage:#1a1c21; --scrim:rgba(20,22,27,.45); --guide:#b45309;
   color-scheme:light;
 }
 *{box-sizing:border-box}
@@ -244,3 +244,48 @@ code{font:500 11px var(--f-mono);background:var(--raised);border-radius:4px;padd
 .notes p{margin:0}
 .notes p.li{padding-left:14px;position:relative}
 .notes p.li::before{content:"";position:absolute;left:3px;top:.6em;width:4px;height:4px;border-radius:50%;background:var(--accent)}
+
+/* En-têtes de piste : nom, puis boutons muet, masqué, verrouillé. */
+.heads{width:164px}
+.th .tlabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th{padding:0 6px;gap:5px}
+.th .tlabel{font:500 11.5px var(--f-ui)}
+.tbtns{display:grid;grid-template-columns:repeat(3,21px);flex:none}
+.tbtns button{width:21px;height:21px;border-radius:4px;display:grid;place-items:center;color:var(--dim)}
+.tbtns button svg{width:13px;height:13px}
+.tbtns button:hover{background:var(--raised);color:var(--fg)}
+.tbtns button[aria-pressed="true"]{color:var(--accent);background:var(--accent-soft)}
+.lane.locked{background:repeating-linear-gradient(135deg,transparent 0 8px,var(--panel2) 8px 16px)}
+.lane.locked .clip,.lane.locked .tmark{pointer-events:none;opacity:.7}
+.lane.hidden .clip,.lane.muted.audio .clip,.lane.muted.sound .clip{opacity:.35}
+/* Outil lame. */
+.tl.razor .lane,.tl.razor .lane .clip{cursor:crosshair}
+.tools .ib[aria-pressed="true"]{background:var(--accent-soft)}
+.tl.razor .grip,.tl.razor .fh,.tl.razor .vol{pointer-events:none}
+/* Repères. */
+.mk{position:absolute;top:2px;height:16px;min-width:12px;transform:translateX(-6px);z-index:2;display:flex;align-items:center;touch-action:none;cursor:pointer;pointer-events:none}
+.mk:hover,.mk:focus-visible{z-index:3}
+.mk::before{content:"";pointer-events:auto;flex:none;width:12px;height:14px;background:var(--mk);clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%);box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+.mk span{max-width:90px;margin-left:3px;padding:0 5px;border-radius:3px;background:var(--mk);color:#10131a;font:600 10px var(--f-ui);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mkline{position:absolute;top:24px;bottom:0;width:1px;opacity:.45;pointer-events:none;z-index:1}
+.guide{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--guide);box-shadow:0 0 0 .5px rgba(0,0,0,.5);pointer-events:none;z-index:4}
+.swatches{display:flex;gap:6px;grid-column:2/4}
+.swatches button{width:22px;height:22px;border-radius:50%;border:2px solid transparent}
+.swatches button[aria-pressed="true"]{border-color:var(--fg)}
+input.sel.text{grid-column:2/4;width:100%;user-select:text}
+/* Bords d'une transition : se tirent pour changer sa durée. */
+.tg{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;touch-action:none}
+.tg.l{left:0}.tg.r{right:0}
+.tmark:hover .tg{background:var(--accent);opacity:.5}
+.tmark.sel:hover .tg{background:var(--on-accent)}
+.pairbtn{display:flex;gap:6px;grid-column:2/4}
+.pairbtn .btn{flex:1;justify-content:center}
+/* Favoris et médias introuvables. */
+.star{position:absolute;right:5px;top:5px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;display:grid;place-items:center;opacity:0;transition:opacity .12s}
+.star svg{width:12px;height:12px}
+.tile:hover .star,.tile:focus-visible .star,.tile.fav .star{opacity:1}
+.tile.missing .add{display:none}
+.tile.fav .star{color:#ffd84d}
+.tile.missing .thumb{outline-color:var(--danger)}
+.lost{position:absolute;inset:auto 5px 5px auto;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;background:var(--danger);color:#fff}
+.tools .sep{margin:0 4px}

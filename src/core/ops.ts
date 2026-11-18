@@ -1,5 +1,5 @@
 /** Opérations de montage. Fonctions pures : elles reçoivent un projet et en renvoient un nouveau. */
-import { IMAGE_DURATION, MIN_CLIP, TEXT_DURATION, type Clip, type FxInstance, type Media, type ParamValue, type Project, type TextStyle, type TrackId, type TransitionInstance } from './types';
+import { IMAGE_DURATION, MARKER_COLORS, MIN_CLIP, TEXT_DURATION, type Marker, type TrackState, type Clip, type FxInstance, type Media, type ParamValue, type Project, type TextStyle, type TrackId, type TransitionInstance } from './types';
 
 let counter = 0;
 export const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(counter++).toString(36)}`;
@@ -165,6 +165,15 @@ export function removeClip(p: Project, id: string): Project {
   return n;
 }
 
+/** Retire un clip d'une piste libre et avance les clips suivants de sa durée : le vide qu'il laisserait est refermé, pas les autres. */
+export function rippleRemove(p: Project, id: string): Project {
+  const f = findClip(p, id);
+  if (!f) return p;
+  const n = removeClip(p, id);
+  if (isFree(f.track)) for (const c of n[f.track]) if (c.start >= f.start + f.clip.dur - 1e-9) c.start -= f.clip.dur;
+  return n;
+}
+
 /** Réordonne un clip sur sa piste magnétique. */
 export function moveClip(p: Project, id: string, toIndex: number): Project {
   const f = findClip(p, id);
@@ -307,6 +316,83 @@ export function freezeAt(p: Project, t: number, dur = 5): { project: Project; cl
   n.video.splice(index, 0, still);
   clampTransitions(n.video);
   return { project: n, clipId: still.id };
+}
+
+/** Coupe en deux tous les clips traversés par l'instant t, sur toutes les pistes non verrouillées. */
+export function splitAll(p: Project, t: number): Project {
+  let n = p;
+  for (const track of TRACKS) if (!p.tracks[track]?.locked) n = splitAt(n, track, t);
+  return n;
+}
+
+/** Vide d'une piste libre contenant l'instant t : [début, fin], ou null s'il n'y a pas de clip après. */
+export function gapAt(p: Project, track: TrackId, t: number): [number, number] | null {
+  if (!isFree(track)) return null;
+  let from = 0;
+  for (const c of p[track]) { // piste triée
+    if (c.start > t) return c.start - from > 1e-6 ? [from, c.start] : null;
+    from = Math.max(from, c.start + c.dur);
+    if (t < from) return null; // t est dans un clip
+  }
+  return null;
+}
+/** Referme le vide situé à l'instant t : les clips suivants de la piste avancent d'autant. */
+export function closeGap(p: Project, track: TrackId, t: number): Project {
+  const gap = gapAt(p, track, t);
+  if (!gap) return p;
+  const n = clone(p), width = gap[1] - gap[0];
+  for (const c of n[track]) if (c.start >= gap[1] - 1e-9) c.start -= width;
+  return n;
+}
+
+/** Pose la même transition, avec la même durée, sur toutes les coupes de la piste principale. */
+export function transitionEverywhere(p: Project, tr: TransitionInstance): Project {
+  if (p.video.length < 2) return p;
+  const n = clone(p);
+  n.video.forEach((c, i) => { c.transition = i < n.video.length - 1 ? clone(tr) : null; });
+  clampTransitions(n.video);
+  return n;
+}
+
+/* ---------- repères ---------- */
+export function addMarker(p: Project, t: number): { project: Project; id: string } {
+  const n = clone(p), m: Marker = { id: newId('mk'), t: Math.max(0, t), name: '', color: MARKER_COLORS[n.markers.length % MARKER_COLORS.length] };
+  n.markers.push(m); n.markers.sort((a, b) => a.t - b.t);
+  return { project: n, id: m.id };
+}
+export function patchMarker(p: Project, id: string, patch: Partial<Pick<Marker, 'name' | 'color' | 't'>>): Project {
+  if (!p.markers.some(m => m.id === id)) return p;
+  const n = clone(p);
+  Object.assign(n.markers.find(m => m.id === id)!, patch); n.markers.sort((a, b) => a.t - b.t);
+  return n;
+}
+export function removeMarker(p: Project, id: string | null): Project {
+  if (!p.markers.length || (id && !p.markers.some(m => m.id === id))) return p;
+  const n = clone(p);
+  n.markers = id ? n.markers.filter(m => m.id !== id) : [];
+  return n;
+}
+
+/** Change l'état d'une piste (muette, masquée, verrouillée). */
+export function setTrack(p: Project, track: TrackId, patch: TrackState): Project {
+  const n = clone(p);
+  n.tracks[track] = { ...n.tracks[track], ...patch };
+  return n;
+}
+
+/** Remplace le fichier d'un média (fichier déplacé ou remplacé) : tous ses clips suivent, bornés à la nouvelle durée. */
+export function replaceMedia(p: Project, mediaId: string, file: Pick<Media, 'path' | 'url' | 'name' | 'kind' | 'duration' | 'width' | 'height' | 'hasAudio'>): Project {
+  const old = p.media.find(m => m.id === mediaId);
+  if (!old || (old.kind === 'audio') !== (file.kind === 'audio')) return p;
+  const n = clone(p);
+  Object.assign(n.media.find(m => m.id === mediaId)!, file);
+  if (file.kind === 'video' || file.kind === 'audio') for (const t of TRACKS) for (const c of n[t]) if (c.mediaId === mediaId && !c.still && file.duration > 0) {
+    c.in = Math.min(c.in, Math.max(0, file.duration - MIN_CLIP)); c.dur = Math.max(MIN_CLIP, Math.min(c.dur, file.duration - c.in)); clampFades(c);
+  }
+  // Un arrêt sur image garde un instant qui existe dans le nouveau fichier.
+  if (file.kind === 'video' && file.duration > 0) for (const t of TRACKS) for (const c of n[t]) if (c.mediaId === mediaId && c.still) c.in = Math.min(c.in, Math.max(0, file.duration - 0.05));
+  clampTransitions(n.video);
+  return n;
 }
 
 /** Gain d'un fondu audio à l'instant local du clip, de 0 à 1. */

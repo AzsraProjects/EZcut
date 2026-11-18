@@ -74,6 +74,14 @@ try {
   const bad = await tool('ezcut_edit_clip', { clipId: ca.json.id, volume: 99, transform: { scale: 1e9 }, blend: 'n\'importe quoi' });
   check('valeurs absurdes bornées', bad.json?.transform?.scale === 20 && bad.json?.blend === undefined && bad.json?.volume === undefined, bad.error ?? bad.text);
   await tool('ezcut_undo');
+  const mk = await tool('ezcut_marker', { time: 2, name: 'Refrain', color: '#22e3b6' });
+  check('repère posé', mk.json?.length === 1 && mk.json[0].time === 2 && mk.json[0].name === 'Refrain', mk.error ?? mk.text);
+  await tool('ezcut_track', { track: 'video', locked: true });
+  const lockedEdit = await tool('ezcut_split', { time: 2 });
+  check('piste verrouillée : modification refusée', !!lockedEdit.error && /verrouill/i.test(lockedEdit.error), lockedEdit.text);
+  const unl = await tool('ezcut_track', { track: 'video', locked: false, muted: true });
+  check('piste déverrouillée et muette', unl.json?.video?.muted === true && !unl.json?.video?.locked, unl.error ?? unl.text);
+  await tool('ezcut_track', { track: 'video', muted: false });
   const nope = await tool('ezcut_remove_clip', { clipId: 'inconnu' });
   check('erreur claire sur un identifiant inconnu', !!nope.error && /introuvable/i.test(nope.error));
 

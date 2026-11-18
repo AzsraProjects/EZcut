@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { findClip, patchClip, projectDuration, trackStarts } from '../core/ops';
+import { findClip, patchClip, projectDuration } from '../core/ops';
 import { player, type PreviewQuality } from '../engine/player';
+import { jumpCut, snapshot } from './actions';
 import { Icon } from './Icon';
 import { useStore } from './store';
 import { subscribeTime, timecode } from './time';
@@ -53,11 +54,8 @@ export function Viewer() {
   };
   useEffect(() => subscribeTime(t => { if (cur.current) cur.current.textContent = timecode(t, fps); }), [fps]);
 
-  const jump = (dir: -1 | 1) => {
-    const p = useStore.getState().project, cuts = [...trackStarts(p.video), projectDuration(p)];
-    const t = dir < 0 ? [...cuts].reverse().find(c => c < player.t - 0.05) ?? 0 : cuts.find(c => c > player.t + 0.05) ?? projectDuration(p);
-    player.seek(t);
-  };
+  const fullscreen = () => { void canvas.current?.requestFullscreen?.().catch(() => {}); };
+  useEffect(() => { addEventListener('ezcut:fullscreen', fullscreen); return () => removeEventListener('ezcut:fullscreen', fullscreen); }, []);
 
   return (
     <section className="viewer">
@@ -68,15 +66,16 @@ export function Viewer() {
       <div className="transport">
         <span className="tc"><b ref={cur}>00:00:00</b> <span>/ {timecode(total, fps)}</span></span>
         <span className="ctl">
-          <button className="ib" aria-label="Coupe précédente" title="Coupe précédente" onClick={() => jump(-1)}><Icon name="prev" fill /></button>
+          <button className="ib" aria-label="Coupe précédente" title="Coupe précédente (↑)" onClick={() => jumpCut(-1)}><Icon name="prev" fill /></button>
           <button className="ib big" aria-label={playing ? 'Pause' : 'Lecture'} title="Lecture / pause (Espace)" onClick={() => player.toggle()}><Icon name={playing ? 'pause' : 'play'} fill /></button>
-          <button className="ib" aria-label="Coupe suivante" title="Coupe suivante" onClick={() => jump(1)}><Icon name="next" fill /></button>
+          <button className="ib" aria-label="Coupe suivante" title="Coupe suivante (↓)" onClick={() => jumpCut(1)}><Icon name="next" fill /></button>
         </span>
         <button className="ib" aria-label={muted ? 'Activer le son' : 'Couper le son'} title="Couper ou rétablir le son de l'aperçu" onClick={() => { player.muted = !muted; setMuted(!muted); }}><Icon name={muted ? 'mute' : 'vol'} /></button>
         <select className="sel" aria-label="Qualité de l'aperçu" title="Qualité de l'aperçu. Automatique : nette à la taille affichée. Réduire soulage un ordinateur qui peine à lire en fluide." value={quality} onChange={e => { const q = e.target.value as PreviewQuality; setQuality(q); player.quality = q; }}>
           <option value="auto">Qualité : auto</option><option value="full">Pleine</option><option value="half">1/2</option><option value="quarter">1/4</option>
         </select>
-        <button className="ib" aria-label="Plein écran" title="Plein écran" onClick={() => { void canvas.current?.requestFullscreen?.().catch(() => {}); }}><Icon name="full" /></button>
+        <button className="ib" aria-label="Enregistrer cette image" title="Enregistrer l'image affichée en PNG (Ctrl+Alt+S)" disabled={empty} onClick={() => void snapshot()}><Icon name="camera" /></button>
+        <button className="ib" aria-label="Plein écran" title="Plein écran (Alt+Entrée)" onClick={fullscreen}><Icon name="full" /></button>
       </div>
     </section>
   );

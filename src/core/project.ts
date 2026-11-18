@@ -1,6 +1,6 @@
 /** Lecture d'un fichier de projet. Le contenu peut venir d'un inconnu : tout est vérifié, borné et reconstruit champ par champ.
  *  Les projets de version 1 (sans incrustations ni titres) sont repris tels quels. */
-import { BLEND_MODES, MIN_CLIP, TEXT_ANIMS, defaultText, type BlendMode, type Clip, type FxInstance, type Media, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TransitionInstance } from './types';
+import { BLEND_MODES, MARKER_COLORS, MIN_CLIP, TEXT_ANIMS, defaultText, type BlendMode, type Marker, type TrackId, type TrackState, type Clip, type FxInstance, type Media, type Params, type ParamValue, type Project, type TextAnim, type TextStyle, type TransitionInstance } from './types';
 
 const MAX_MEDIA = 2000, MAX_CLIPS = 5000, MAX_FX = 32, MAX_PARAMS = 64;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -63,7 +63,7 @@ function clip(v: unknown, mediaIds: Set<string>, isText: boolean): Clip | null {
     id: str(v.id, 80), mediaId: isText ? '' : (v.mediaId as string), start: num(v.start, 0, 86400 * 4, 0), in: num(v.in, 0, 86400 * 4, 0), dur,
     volume: num(v.volume, 0, 1, 1), fadeIn: num(v.fadeIn, 0, dur, 0), fadeOut: num(v.fadeOut, 0, dur - num(v.fadeIn, 0, dur, 0), 0),
     vfadeIn: num(v.vfadeIn, 0, dur, 0), vfadeOut: num(v.vfadeOut, 0, dur - num(v.vfadeIn, 0, dur, 0), 0),
-    transform: { scale: num(t.scale, 0.01, 20, 1), x: num(t.x, -5, 5, 0), y: num(t.y, -5, 5, 0), rot: num(t.rot, -3600, 3600, 0) },
+    transform: { scale: num(t.scale, 0.01, 20, 1), x: num(t.x, -5, 5, 0), y: num(t.y, -5, 5, 0), rot: num(t.rot, -3600, 3600, 0), ...(t.flipH === true ? { flipH: true } : {}), ...(t.flipV === true ? { flipV: true } : {}) },
     opacity: num(v.opacity, 0, 1, 1), blend: oneOf<BlendMode>(v.blend, BLEND_MODES, 'normal'),
     color: params(v.color), fx: isText ? [] : (Array.isArray(v.fx) ? v.fx : []).slice(0, MAX_FX).map(fx).filter((f): f is FxInstance => !!f),
     transition: transition(v.transition), text: style, still: !isText && v.still === true, off: v.off === true,
@@ -95,7 +95,11 @@ export function parseProject(json: string): Project | null {
     list.sort((a, b) => a.start - b.start);
     list.forEach((c, i) => { c.transition = null; const prev = list[i - 1]; if (prev && c.start < prev.start + prev.dur) c.start = prev.start + prev.dur; });
   }
+  const markers: Marker[] = (Array.isArray(raw.markers) ? raw.markers : []).slice(0, 500).filter(isObj)
+    .map((m, i) => ({ id: str(m.id, 80, 'mk-' + i), t: num(m.t, 0, 86400 * 4, 0), name: str(m.name, 80), color: color(m.color, MARKER_COLORS[0]) })).sort((a, b) => a.t - b.t);
+  const tracks: Partial<Record<TrackId, TrackState>> = {};
+  if (isObj(raw.tracks)) for (const k of ['video', 'audio', 'sound', 'overlay', 'text'] as const) { const s = raw.tracks[k]; if (isObj(s)) tracks[k] = { ...(s.muted === true ? { muted: true } : {}), ...(s.hidden === true ? { hidden: true } : {}), ...(s.locked === true ? { locked: true } : {}) }; }
   const even = (n: number) => Math.round(n / 2) * 2;
   return { version: 2, name: str(raw.name, 120, 'Projet sans titre'), width: even(num(raw.width, 16, 8192, 1920)), height: even(num(raw.height, 16, 8192, 1080)),
-    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, sound, overlay, text: titles };
+    fps: Math.round(num(raw.fps, 1, 240, 30)), media: med, video, audio, sound, overlay, text: titles, markers, tracks };
 }

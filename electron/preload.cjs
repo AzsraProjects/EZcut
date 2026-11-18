@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('ez', {
   exportFinish: () => ipcRenderer.invoke('export:finish'),
   exportCancel: () => ipcRenderer.invoke('export:cancel'),
   showLastExport: () => ipcRenderer.invoke('shell:show'),
+  saveSnapshot: (bytes, name) => ipcRenderer.invoke('snapshot:save', bytes, String(name)),
   version: () => ipcRenderer.invoke('app:version'),
   onUpdate: fn => { ipcRenderer.removeAllListeners('update:state'); ipcRenderer.on('update:state', (_e, state) => fn(state)); },
   updateDownload: () => ipcRenderer.invoke('update:download'),

@@ -62,6 +62,8 @@ export interface EzApi {
   exportFinish(): Promise<{ ok: boolean; error?: string; path?: string }>;
   exportCancel(): Promise<void>;
   showLastExport(): Promise<void>;
+  /** Enregistre une image PNG à l'emplacement choisi par l'utilisateur. Renvoie le chemin, ou null s'il a renoncé. */
+  saveSnapshot(png: Uint8Array, name: string): Promise<string | null>;
   autoTest(): Promise<AutoTest | null>;
   autoTestDone(result: unknown): Promise<void>;
 }

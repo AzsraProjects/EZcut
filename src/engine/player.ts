@@ -69,6 +69,8 @@ export class Player {
   private started = false;
   /** Vrai entre un déplacement de la tête de lecture et la synchronisation suivante. */
   private jumped = false;
+  /** Projet en cours d'export (instantané), pour que l'état des pistes vienne de lui et non du projet vivant. */
+  private exportProject: Project | null = null;
 
   init() {
     if (this.started) return;
@@ -187,7 +189,7 @@ export class Player {
   }
   /** Incrustations puis titres présents à l'instant t, du dessous vers le dessus. */
   private layersAt(p: Project, t: number): Layer[] {
-    return [...activeAt(p.overlay, t), ...activeAt(p.text, t)].filter(clip => !clip.off).map(clip => ({ clip, local: t - clip.start }));
+    return [...(p.tracks.overlay?.hidden ? [] : activeAt(p.overlay, t)), ...(p.tracks.text?.hidden ? [] : activeAt(p.text, t))].filter(clip => !clip.off).map(clip => ({ clip, local: t - clip.start }));
   }
 
   private syncVideo(p: Project, f: Frame | null, layers: Layer[], t: number) {
@@ -200,7 +202,7 @@ export class Player {
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement;
       el.volume = clamp(w.clip.volume * fadeGain(w.clip, w.time - w.clip.in), 0, 1);
-      el.muted = this.muted || !w.live || w.clip.still || w.clip.off;
+      el.muted = this.muted || !w.live || w.clip.still || w.clip.off || !!p.tracks.video?.muted;
       if (w.live && this.playing && !w.clip.still) {
         if (el.paused) { if (el.ended || Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time; el.play().catch(() => {}); }
         else if (this.jumped && Math.abs(el.currentTime - w.time) > 0.05) el.currentTime = w.time;
@@ -218,7 +220,7 @@ export class Player {
       if (!s || s.kind !== 'video') continue;
       const el = s.el as HTMLVideoElement, time = l.clip.in + l.local, off = Math.abs(el.currentTime - time);
       el.volume = clamp(l.clip.volume * fadeGain(l.clip, l.local), 0, 1);
-      el.muted = this.muted;
+      el.muted = this.muted || !!p.tracks.overlay?.muted;
       if (this.playing) {
         if (el.paused) { if (el.ended || off > 0.05) el.currentTime = time; el.play().catch(() => {}); }
         else if (off > (this.jumped ? 0.05 : 0.3)) el.currentTime = time;
@@ -249,7 +251,7 @@ export class Player {
 
   private syncAudio(p: Project, t: number) {
     const all = [...p.audio, ...p.sound], active = new Set<string>();
-    for (const clip of [...activeAt(p.audio, t), ...activeAt(p.sound, t)].filter(c => !c.off)) {
+    for (const clip of [...(p.tracks.audio?.muted ? [] : activeAt(p.audio, t)), ...(p.tracks.sound?.muted ? [] : activeAt(p.sound, t))].filter(c => !c.off)) {
       active.add(clip.id);
       let a = this.audios.get(clip.id);
       const media = p.media.find(m => m.id === clip.mediaId);
@@ -331,6 +333,8 @@ export class Player {
   /** Compose l'instant t du projet vers out (ou le canvas). C'est le seul chemin de rendu : aperçu et export passent ici. */
   compose(f: Frame | null, layers: Layer[], w: number, h: number, out: Target | null, key: string, t: number, extra?: ChainItem) {
     const set = this.set(w, h);
+    if (this.getProject().tracks.video?.hidden && !this.exportProject) f = null;
+    else if (this.exportProject?.tracks.video?.hidden) f = null;
     // Seuls les titres à l'écran gardent leur image en mémoire : cent sous-titres ne coûtent pas cent textures.
     if (this.texts.size) { const shown = new Set(layers.filter(l => l.clip.text).map(l => l.clip.id)); for (const id of [...this.texts.keys()]) if (!shown.has(id)) this.dropText(id); }
     const visible = layers.filter(l => l.clip.text || this.sources.get(l.clip.id)?.loaded);
@@ -525,7 +529,8 @@ export class Player {
     }
     const set = this.set(w, h);
     this.fps = p.fps;
-    this.compose(f, layers, w, h, set.out, 'x', t);
+    this.exportProject = p; // posé au dernier moment : un échec en amont ne le laisse pas en place
+    try { this.compose(f, layers, w, h, set.out, 'x', t); } finally { this.exportProject = null; }
     return this.engine.readPixels(w, h, set.out, into);
   }
 }
